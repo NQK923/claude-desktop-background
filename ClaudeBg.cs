@@ -20,9 +20,9 @@ using Timer = System.Windows.Forms.Timer;
 [assembly: AssemblyProduct("Claude background")]
 [assembly: AssemblyDescription("Shows an image behind the Claude desktop window. Unofficial.")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 NQK923, MIT License")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
-[assembly: AssemblyInformationalVersion("1.2.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyInformationalVersion("1.3.0")]
 
 // Shows an image behind each Claude desktop window and makes those windows semi-transparent.
 // Build with build.ps1 (ClaudeBg.exe), or run claude-bg.ps1. Settings live in settings.ini next to it.
@@ -61,6 +61,10 @@ public static class ClaudeBg
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc proc, uint pid, uint tid, uint flags);
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr h);
     [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref int value, uint winIni);
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr p, out long created, out long exited, out long kernel, out long user);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr p, uint flags, StringBuilder name, ref int size);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
 
@@ -92,11 +96,13 @@ public static class ClaudeBg
     const uint EVENT_OBJECT_DESTROY = 0x8001, EVENT_OBJECT_SHOW = 0x8002, EVENT_OBJECT_REORDER = 0x8004, EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
     const uint EVENT_OBJECT_CLOAKED = 0x8017, EVENT_OBJECT_UNCLOAKED = 0x8018;
     const uint WINEVENT_SKIPOWNPROCESS = 0x2;
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
-    // A second ClaudeBg.exe started with --toggle, --next or --restore posts this to the running one.
+    // A second ClaudeBg.exe started with --toggle, --next or --restore posts this to the running one;
+    // started with no command, it posts CmdAlready so the running one says where it is.
     const string HostTitle = "ClaudeBg host";
     const int WM_APP_COMMAND = 0x8000 + 1;
-    const int CmdToggle = 1, CmdNext = 2, CmdExit = 3;
+    const int CmdToggle = 1, CmdNext = 2, CmdExit = 3, CmdAlready = 4;
 
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string RunValue = "ClaudeBg";
@@ -134,7 +140,8 @@ public static class ClaudeBg
                 {
                     switch (k)
                     {
-                        case "image": if (v.Length > 0) s.Image = v; break;
+                        // Relative paths are next to settings.ini, not wherever Windows started the program.
+                        case "image": if (v.Length > 0) s.Image = Path.Combine(dir, v); break;
                         case "opacity": if (num) s.Focused = s.Unfocused = d; break;  // older single value
                         case "dim": if (num) s.DimDark = s.DimLight = d; break;       // older single value
                         case "focused": if (num) s.Focused = d; break;
@@ -143,9 +150,9 @@ public static class ClaudeBg
                         case "dimLight": if (num) s.DimLight = d; break;
                         case "blur": if (num) s.Blur = Math.Max(0, Math.Min(BlurFactors.Length - 1, (int)d)); break;
                         case "tint": s.Tint = ColorTranslator.FromHtml(v); break;
-                        case "alignX": if (num) s.AlignX = d; break;
-                        case "alignY": if (num) s.AlignY = d; break;
-                        case "slideFolder": s.SlideFolder = v; break;
+                        case "alignX": if (num) s.AlignX = Math.Max(0, Math.Min(1, d)); break;
+                        case "alignY": if (num) s.AlignY = Math.Max(0, Math.Min(1, d)); break;
+                        case "slideFolder": s.SlideFolder = v.Length > 0 ? Path.Combine(dir, v) : ""; break;
                         case "slideMinutes": if (num) s.SlideMinutes = Math.Max(0, (int)d); break;
                         case "hideInCapture": s.HideInCapture = v == "1" || v.ToLowerInvariant() == "true"; break;
                     }
@@ -158,9 +165,11 @@ public static class ClaudeBg
         public void Save()
         {
             Func<double, string> f = x => x.ToString(CultureInfo.InvariantCulture);
+            // Written beside it first and then swapped in, so a crash or full disk never leaves half a file.
+            string tmp = File + ".tmp";
             try
             {
-                System.IO.File.WriteAllLines(File, new[] {
+                System.IO.File.WriteAllLines(tmp, new[] {
                     "image=" + Image,
                     "focused=" + f(Focused), "unfocused=" + f(Unfocused),
                     "dimDark=" + f(DimDark), "dimLight=" + f(DimLight),
@@ -169,8 +178,10 @@ public static class ClaudeBg
                     "alignX=" + f(AlignX), "alignY=" + f(AlignY),
                     "slideFolder=" + SlideFolder, "slideMinutes=" + SlideMinutes,
                     "hideInCapture=" + (HideInCapture ? "1" : "0") });
+                if (System.IO.File.Exists(File)) System.IO.File.Replace(tmp, File, null);
+                else System.IO.File.Move(tmp, File);
             }
-            catch (IOException) { }
+            catch (Exception ex) { Log("Could not save " + File + ": " + ex.Message); }
         }
     }
 
@@ -298,6 +309,9 @@ public static class ClaudeBg
                 if (c == CmdToggle) Toggle();
                 else if (c == CmdNext) NextSlide();
                 else if (c == CmdExit) Application.Exit();
+                else if (c == CmdAlready)
+                    tray.ShowBalloonTip(5000, "Claude background is already running",
+                        "Right-click this icon for settings.", ToolTipIcon.Info);
             }
             base.WndProc(ref m);
         }
@@ -334,7 +348,11 @@ public static class ClaudeBg
 
     static readonly Dictionary<IntPtr, Attachment> attached = new Dictionary<IntPtr, Attachment>();
     static readonly Dictionary<uint, IntPtr[]> pidHooks = new Dictionary<uint, IntPtr[]>();
-    static readonly Dictionary<uint, bool> claudePids = new Dictionary<uint, bool>(); // pid -> is claude.exe
+    // pid -> whether it is claude.exe, with the process's start time: Windows reuses pids, so an entry
+    // counts only for the process that had the pid when it was made.
+    struct PidInfo { public long Created; public bool IsClaude; }
+    static readonly Dictionary<uint, PidInfo> claudePids = new Dictionary<uint, PidInfo>();
+    static readonly StringBuilder nameBuf = new StringBuilder(1024);
     static bool enabled = true;
     static bool claudeDark;
     static int lastThemeCheck = Environment.TickCount - 60000;
@@ -345,12 +363,23 @@ public static class ClaudeBg
 
     static bool IsClaudePid(uint pid)
     {
-        bool yes;
-        if (claudePids.TryGetValue(pid, out yes)) return yes;
-        try { using (var p = Process.GetProcessById((int)pid)) yes = p.ProcessName.Equals("claude", StringComparison.OrdinalIgnoreCase); }
-        catch (ArgumentException) { yes = false; } // already gone
-        claudePids[pid] = yes;
-        return yes;
+        IntPtr p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (p == IntPtr.Zero) return false; // already gone, or not ours to look at
+        try
+        {
+            long created, exited, kernel, user;
+            if (!GetProcessTimes(p, out created, out exited, out kernel, out user)) return false;
+            PidInfo info;
+            if (claudePids.TryGetValue(pid, out info) && info.Created == created) return info.IsClaude;
+            nameBuf.Length = 0;
+            int size = nameBuf.Capacity;
+            info.Created = created;
+            info.IsClaude = QueryFullProcessImageName(p, 0, nameBuf, ref size)
+                && Path.GetFileName(nameBuf.ToString(0, size)).Equals("claude.exe", StringComparison.OrdinalIgnoreCase);
+            claudePids[pid] = info;
+            return info.IsClaude;
+        }
+        finally { CloseHandle(p); }
     }
 
     // Claude's main windows: visible, unowned Chromium windows of claude.exe with a caption and a resize frame.
@@ -424,7 +453,9 @@ public static class ClaudeBg
         var a = attached.Values.FirstOrDefault(x => IsWindowVisible(x.Target) && !IsIconic(x.Target));
         if (a == null || !enabled) return;
         lastThemeCheck = Environment.TickCount;
-        var dark = ClaudeDark(a.Target);
+        bool? dark;
+        try { dark = ClaudeDark(a.Target); }
+        catch (Exception ex) { Log("Could not read Claude's theme: " + ex.Message); return; } // e.g. out of memory for a huge window
         if (dark.HasValue && dark.Value != claudeDark)
         {
             claudeDark = dark.Value;
@@ -434,8 +465,34 @@ public static class ClaudeBg
 
     static void Log(string message)
     {
-        try { File.AppendAllText(logPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + message + Environment.NewLine); }
+        if (logPath == null) return;
+        try
+        {
+            // Kept small: past 1 MB the older half goes.
+            var info = new FileInfo(logPath);
+            if (info.Exists && info.Length > 1 << 20)
+            {
+                var lines = File.ReadAllLines(logPath);
+                File.WriteAllLines(logPath, lines.Skip(lines.Length / 2));
+            }
+            File.AppendAllText(logPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + message + Environment.NewLine);
+        }
         catch (Exception) { }
+    }
+
+    // Makes the attached Claude windows opaque again with plain Win32 calls only, so it is safe from any
+    // thread and while the process is going down; the background windows go with the process.
+    static void RestoreTargets()
+    {
+        Attachment[] all;
+        try { all = attached.Values.ToArray(); }
+        catch (InvalidOperationException) { RestoreClaude(); return; } // changed under us on the UI thread
+        foreach (var a in all)
+            if (IsWindow(a.Target))
+            {
+                SetLayeredWindowAttributes(a.Target, 0, 255, LWA_ALPHA);
+                SetWindowLong(a.Target, GWL_EXSTYLE, a.OriginalExStyle);
+            }
     }
 
     static void Attach(IntPtr h)
@@ -490,7 +547,15 @@ public static class ClaudeBg
         foreach (var a in attached.Values.ToList()) Detach(a);
     }
 
+    // Windows calls this from inside the message loop, where an exception would end the process instead
+    // of reaching Application.ThreadException: log it and carry on.
     static void OnWinEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+    {
+        try { HandleWinEvent(ev, hwnd, idObject); }
+        catch (Exception ex) { Log(ex.ToString()); }
+    }
+
+    static void HandleWinEvent(uint ev, IntPtr hwnd, int idObject)
     {
         if (ev == EVENT_SYSTEM_FOREGROUND)
         {
@@ -604,7 +669,7 @@ public static class ClaudeBg
         }
 
         RECT r;
-        DwmGetWindowAttribute(a.Target, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT)));
+        if (DwmGetWindowAttribute(a.Target, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) != 0) return;
         var rect = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
         var fh = a.Form.Handle;
         int now = Environment.TickCount;
@@ -616,9 +681,9 @@ public static class ClaudeBg
         bool holding = unchecked(a.HoldUntil - now) > 0;
         if (holding && !holdTimer.Enabled) holdTimer.Start();
 
-        if (!enabled || a.Moving || holding)
+        if (!enabled || bgImage == null || a.Moving || holding)
         {
-            // Off fades out; a drag (like Windows' own acrylic) or an animation turns opaque at once.
+            // Off (or no image yet) fades out; a drag (like Windows' own acrylic) or an animation turns opaque at once.
             SetAlpha(a, 255, !a.Moving && !holding);
             if (a.Alpha == 255) HideBg(a);
             a.Last = rect;
@@ -678,33 +743,68 @@ public static class ClaudeBg
     }
 
     // Decodes with Windows Imaging Component, which also reads WebP (and HEIC with its extension),
-    // shrinks it to cover the largest screen, and holds no lock on the file.
+    // shrinks it to cover the largest screen, turns it the way the camera held it, and holds no lock on the file.
     static Bitmap LoadImage(string path)
     {
         byte[] bytes = File.ReadAllBytes(path);
         Wic.BitmapSource src;
+        int orientation;
         try
         {
             var dec = Wic.BitmapDecoder.Create(new MemoryStream(bytes), Wic.BitmapCreateOptions.PreservePixelFormat, Wic.BitmapCacheOption.OnLoad);
             src = dec.Frames[0];
+            orientation = WicOrientation(src.Metadata as Wic.BitmapMetadata);
         }
         catch (Exception)
         {
             using (var img = Image.FromStream(new MemoryStream(bytes))) return Fit(img); // older GDI+ route
         }
+        // Rotated a quarter turn, the image's width ends up as its height.
+        bool turned = orientation >= 5;
+        int w = turned ? src.PixelHeight : src.PixelWidth, h = turned ? src.PixelWidth : src.PixelHeight;
         var screen = LargestScreen();
-        double s = Math.Max((double)screen.Width / src.PixelWidth, (double)screen.Height / src.PixelHeight);
+        double s = Math.Max((double)screen.Width / w, (double)screen.Height / h);
         if (s < 1) src = new Wic.TransformedBitmap(src, new System.Windows.Media.ScaleTransform(s, s));
         src = new Wic.FormatConvertedBitmap(src, System.Windows.Media.PixelFormats.Pbgra32, null, 0);
         var bmp = new Bitmap(src.PixelWidth, src.PixelHeight, PixelFormat.Format32bppPArgb);
         var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.WriteOnly, bmp.PixelFormat);
         try { src.CopyPixels(System.Windows.Int32Rect.Empty, data.Scan0, data.Stride * data.Height, data.Stride); }
         finally { bmp.UnlockBits(data); }
+        Orient(bmp, orientation);
         return bmp;
+    }
+
+    // The EXIF orientation (1 to 8) phones and cameras write instead of turning the pixels; 1 when there is none.
+    static int WicOrientation(Wic.BitmapMetadata meta)
+    {
+        if (meta == null) return 1;
+        try
+        {
+            var v = meta.GetQuery("System.Photo.Orientation");
+            int o = v is ushort ? (ushort)v : 1;
+            return o >= 1 && o <= 8 ? o : 1;
+        }
+        catch (Exception) { return 1; } // formats without that metadata throw
+    }
+
+    static readonly RotateFlipType[] Orientations = {
+        RotateFlipType.RotateNoneFlipNone, RotateFlipType.RotateNoneFlipNone, RotateFlipType.RotateNoneFlipX,
+        RotateFlipType.Rotate180FlipNone, RotateFlipType.RotateNoneFlipY, RotateFlipType.Rotate90FlipX,
+        RotateFlipType.Rotate90FlipNone, RotateFlipType.Rotate270FlipX, RotateFlipType.Rotate270FlipNone };
+
+    static void Orient(Image img, int orientation)
+    {
+        if (orientation > 1 && orientation <= 8) img.RotateFlip(Orientations[orientation]);
     }
 
     static Bitmap Fit(Image img)
     {
+        const int OrientationTag = 0x0112;
+        if (img.PropertyIdList.Contains(OrientationTag))
+        {
+            var bytes = img.GetPropertyItem(OrientationTag).Value;
+            if (bytes != null && bytes.Length >= 2) Orient(img, BitConverter.ToUInt16(bytes, 0));
+        }
         var screen = LargestScreen();
         double s = Math.Min(1, Math.Max((double)screen.Width / img.Width, (double)screen.Height / img.Height));
         var bmp = new Bitmap(Math.Max(1, (int)(img.Width * s)), Math.Max(1, (int)(img.Height * s)), PixelFormat.Format32bppPArgb);
@@ -757,6 +857,7 @@ public static class ClaudeBg
         tray.Icon = MakeIcon(img);
         if (oldIcon != null) oldIcon.Dispose();
         currentImage = path;
+        SyncAll(); // the first image brings the backgrounds in
         return true;
     }
 
@@ -868,13 +969,13 @@ public static class ClaudeBg
                         File.Copy(dlg.FileName, copy, true);
                     currentImage = cfg.Image = copy;
                 }
-                catch (IOException) { cfg.Image = dlg.FileName; }
+                catch (Exception) { cfg.Image = dlg.FileName; } // e.g. the folder is read-only
                 cfg.SlideMinutes = 0;
                 cfg.Save();
                 ConfigureSlideshow();
             }
         });
-        menu.Items.Add("Reload image", null, (s, e) => TrySetImage(currentImage, true));
+        menu.Items.Add("Reload image", null, (s, e) => { if (currentImage != null) TrySetImage(currentImage, true); });
 
         var slideLabels = new[] { "Choose folder...", "Next image", "-", "Off", "Every 5 minutes", "Every 15 minutes", "Every 30 minutes", "Every hour" };
         var slideMinutes = new[] { 0, 0, 0, 0, 5, 15, 30, 60 };
@@ -1006,19 +1107,46 @@ public static class ClaudeBg
         return 0;
     }
 
+    // Settings, log and the copied image live next to the program, or in %LOCALAPPDATA%\ClaudeBg when
+    // that folder cannot be written (Program Files, a read-only share).
+    static string DataDir(string dir)
+    {
+        try
+        {
+            string probe = Path.Combine(dir, ".claude-bg-write-test");
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return dir;
+        }
+        catch (Exception)
+        {
+            string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeBg");
+            Directory.CreateDirectory(local);
+            return local;
+        }
+    }
+
     public static void Run(string dir)
     {
         bool first;
         var mutex = new Mutex(true, "Local\\ClaudeBg", out first);
-        if (!first) return; // already running
+        if (!first)
+        {
+            // Already running: have that one point at its tray icon instead of doing nothing.
+            var running = FindWindow(null, HostTitle);
+            if (running != IntPtr.Zero) PostMessage(running, WM_APP_COMMAND, (IntPtr)CmdAlready, IntPtr.Zero);
+            return;
+        }
 
-        SetProcessDpiAwarenessContext(new IntPtr(-4)); // per-monitor v2, so rects are physical pixels
+        // Per-monitor v2, so rects are physical pixels; Windows 10 before 1703 lacks it and falls back.
+        try { SetProcessDpiAwarenessContext(new IntPtr(-4)); }
+        catch (EntryPointNotFoundException) { }
         Application.EnableVisualStyles();
 
-        appDir = dir;
-        logPath = Path.Combine(dir, "claude-bg.log");
-        bool firstRun = !File.Exists(Path.Combine(dir, "settings.ini"));
-        cfg = Settings.Load(dir);
+        appDir = DataDir(dir);
+        logPath = Path.Combine(appDir, "claude-bg.log");
+        bool firstRun = !File.Exists(Path.Combine(appDir, "settings.ini"));
+        cfg = Settings.Load(appDir);
         claudeDark = WindowsDark(); // until Claude's own window can be read
         try { desktops = (IVirtualDesktopManager)new VirtualDesktopManager(); }
         catch (Exception) { desktops = null; }
@@ -1042,21 +1170,28 @@ public static class ClaudeBg
         UpdateTrayText();
 
         if (cfg.SlideMinutes > 0 && SlideFiles().Length > 0) NextSlide();
-        if (currentImage == null && !TrySetImage(cfg.Image, false)) TrySetImage(Path.Combine(dir, "bg.jpg"), true);
+        if (currentImage == null)
+        {
+            // The saved image, else a bg.jpg next to the settings or the program. With none at all, Claude
+            // stays opaque until one is chosen from the tray menu.
+            var image = new[] { cfg.Image, Path.Combine(appDir, "bg.jpg"), Path.Combine(dir, "bg.jpg") }.FirstOrDefault(File.Exists);
+            if (image != null) TrySetImage(image, true);
+        }
         ApplyLook();
         ConfigureSlideshow();
 
         bool hotkey = RegisterHotKey(host.Handle, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.B);
-        if (firstRun)
-        {
-            cfg.Save();
+        if (currentImage == null)
+            tray.ShowBalloonTip(8000, "Claude background needs an image",
+                "Right-click this icon and choose \"Change image...\", or put a bg.jpg next to the program.", ToolTipIcon.Info);
+        else if (firstRun)
             tray.ShowBalloonTip(8000, "Claude background is running",
                 "It shows your image behind Claude. Right-click this icon for settings" +
                 (hotkey ? "; Ctrl+Alt+B turns it on and off." : "."), ToolTipIcon.Info);
-        }
         else if (!hotkey)
             tray.ShowBalloonTip(5000, "Claude background",
                 "Ctrl+Alt+B is taken by another app. Use the tray icon to turn the background on and off.", ToolTipIcon.Info);
+        if (firstRun) cfg.Save();
 
         globalHooks.Add(SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, winEventProc, 0, 0, WINEVENT_SKIPOWNPROCESS));
         globalHooks.Add(SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND, IntPtr.Zero, winEventProc, 0, 0, WINEVENT_SKIPOWNPROCESS));
@@ -1066,11 +1201,19 @@ public static class ClaudeBg
         {
             if (e.Category == UserPreferenceCategory.General) ui.Post(_ => CheckTheme(true), null);
         };
+        // A bigger screen plugged in needs more of the image than was kept when it loaded.
+        SystemEvents.DisplaySettingsChanged += (s, e) => ui.Post(_ =>
+        {
+            if (currentImage != null && bgImage != null)
+            {
+                var screen = LargestScreen();
+                if (bgImage.Width < screen.Width || bgImage.Height < screen.Height) TrySetImage(currentImage, false);
+            }
+        }, null);
 
-        // Every 2 seconds: attach Claude windows that opened, and check the attached ones for anything an
-        // event missed. Claude's theme is read at most once a minute from here.
-        var timer = new Timer { Interval = 2000 };
-        timer.Tick += (s, e) =>
+        // Every 2 seconds, and once right away: attach Claude windows that opened, and check the attached
+        // ones for anything an event missed. Claude's theme is read at most once a minute from here.
+        Action scan = () =>
         {
             foreach (var h in FindClaudeWindows())
                 if (!attached.ContainsKey(h)) Attach(h);
@@ -1082,6 +1225,8 @@ public static class ClaudeBg
             if (unchecked(Environment.TickCount - lastThemeCheck) > 60000) CheckTheme(false);
             if (claudePids.Count > 64) claudePids.Clear(); // forget pids of processes long gone
         };
+        var timer = new Timer { Interval = 2000 };
+        timer.Tick += (s, e) => scan();
 
         // Restore the Claude windows on every way out the process can still see.
         Application.ApplicationExit += (s, e) =>
@@ -1092,10 +1237,12 @@ public static class ClaudeBg
             tray.Visible = false;
         };
         Application.ThreadException += (s, e) => Log(e.Exception.ToString()); // keep running
-        AppDomain.CurrentDomain.UnhandledException += (s, e) => { Log(e.ExceptionObject.ToString()); DetachAll(); };
-        AppDomain.CurrentDomain.ProcessExit += (s, e) => DetachAll();
-        SystemEvents.SessionEnding += (s, e) => Application.Exit();
+        // These can run on another thread as the process ends, so they only make Claude opaque again.
+        AppDomain.CurrentDomain.UnhandledException += (s, e) => { Log(e.ExceptionObject.ToString()); RestoreTargets(); };
+        AppDomain.CurrentDomain.ProcessExit += (s, e) => RestoreTargets();
+        SystemEvents.SessionEnding += (s, e) => { RestoreTargets(); ui.Post(_ => Application.Exit(), null); };
 
+        scan();
         timer.Start();
         Application.Run();
         GC.KeepAlive(mutex);
