@@ -8,7 +8,8 @@ Puts an image behind the Claude desktop app window on Windows and makes that win
 
 - Background image follows each Claude window as it moves, resizes, minimizes, closes or changes virtual desktop (event-driven)
 - Works with several Claude windows at once
-- Smooth: attaches the moment Claude opens, fades opacity instead of jumping, and keeps the image out of sight while Windows animates opening, restoring, maximizing, snapping or dragging the window, so it never shows around the animating window. Claude is opaque whenever its image is not behind it. Respects Windows' "Animation effects" setting
+- Smooth: attaches the moment Claude opens and eases opacity instead of jumping. While Windows animates opening or restoring, Claude stays opaque and the image waits; while it animates maximizing, restoring down or snapping, the image covers only what the old and new window share, so it never shows around the animating window and nothing flashes when it lands. Plain moves follow at once. Respects Windows' animation settings, waiting for nothing when they are off
+- Matches Windows 11's rounded corners (square when maximized or snapped), so no corner of the image shows outside Claude's
 - Option to keep the image out of screenshots and screen sharing (Teams, Zoom, Snipping Tool)
 - Start with Windows from the tray menu
 - Loads JPEG, PNG, BMP, GIF and TIFF; WebP, HEIC, AVIF and JPEG XL when Windows has their codec (free "... Image Extensions" in the Microsoft Store). Large photos are shrunk to your screen size on load, and phone photos are turned the right way up (EXIF orientation)
@@ -43,7 +44,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 To build and run the tests too (no Claude window needed; CI runs them on every push):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File testsun-tests.ps1
+powershell -ExecutionPolicy Bypass -File tests
+un-tests.ps1
 ```
 
 Without building, `claude-bg.ps1` compiles and runs the same code:

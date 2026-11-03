@@ -33,6 +33,9 @@ public static class ClaudeBg
     [StructLayout(LayoutKind.Sequential)]
     struct RECT { public int Left, Top, Right, Bottom; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct ANIMATIONINFO { public int Size, MinAnimate; }
+
     delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
     delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 
@@ -44,6 +47,7 @@ public static class ClaudeBg
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
@@ -61,6 +65,7 @@ public static class ClaudeBg
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc proc, uint pid, uint tid, uint flags);
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr h);
     [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref int value, uint winIni);
+    [DllImport("user32.dll", EntryPoint = "SystemParametersInfo")] static extern bool SystemParametersInfoAnimation(uint action, uint param, ref ANIMATIONINFO value, uint winIni);
     [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr p, out long created, out long exited, out long kernel, out long user);
@@ -84,8 +89,10 @@ public static class ClaudeBg
     const uint LWA_ALPHA = 0x2;
     const uint GW_HWNDNEXT = 2, GW_OWNER = 4, GA_ROOTOWNER = 3;
     const uint SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40, SWP_NOOWNERZORDER = 0x200;
-    const int DWMWA_EXTENDED_FRAME_BOUNDS = 9, DWMWA_TRANSITIONS_FORCEDISABLED = 3;
-    const uint SPI_GETCLIENTAREAANIMATION = 0x1042;
+    const int DWMWA_EXTENDED_FRAME_BOUNDS = 9, DWMWA_TRANSITIONS_FORCEDISABLED = 3, DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34;
+    const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
+    const int DWMWCP_DONOTROUND = 1, DWMWCP_ROUND = 2;
+    const uint SPI_GETANIMATION = 0x48, SPI_GETCLIENTAREAANIMATION = 0x1042;
     const int AnimationHoldMs = 300; // how long Windows' open, restore, maximize and snap animations run
     const uint PW_RENDERFULLCONTENT = 2;
     const uint WDA_NONE = 0, WDA_EXCLUDEFROMCAPTURE = 0x11;
@@ -193,9 +200,14 @@ public static class ClaudeBg
 
     class BgForm : Form
     {
-        Bitmap cache;    // image already placed, blurred and tinted for the current size
+        Bitmap cache;    // image already placed, blurred and tinted for the current canvas
         bool cacheFast;  // drawn quickly during a resize; drawn properly once the size settles
         readonly Timer settle = new Timer { Interval = 150 };
+
+        // The image is laid out for the whole Claude window (the canvas); while Windows animates a size
+        // change this window may cover only part of it, at Offset, so the image never shifts when it grows back.
+        public Size Canvas;
+        public Point Offset;
 
         public BgForm()
         {
@@ -235,24 +247,27 @@ public static class ClaudeBg
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            int on = 1;
+            int on = 1, none = DWMWA_COLOR_NONE;
             DwmSetWindowAttribute(Handle, DWMWA_TRANSITIONS_FORCEDISABLED, ref on, sizeof(int));
+            // Rounded windows get a border from Windows 11; this one would cover the image's edge under Claude's.
+            DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref none, sizeof(int));
         }
 
         protected override void OnPaintBackground(PaintEventArgs e) { }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            if (bgImage == null || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-            if (cache == null || cache.Size != ClientSize)
+            var canvas = Canvas.IsEmpty ? ClientSize : Canvas;
+            if (bgImage == null || canvas.Width <= 0 || canvas.Height <= 0) return;
+            if (cache == null || cache.Size != canvas)
             {
                 bool fast = cache != null; // the size changed: draw quickly now, properly when it settles
                 if (cache != null) cache.Dispose();
-                cache = Render(ClientSize, fast);
+                cache = Render(canvas, fast);
                 cacheFast = fast;
                 if (fast) { settle.Stop(); settle.Start(); }
             }
-            e.Graphics.DrawImageUnscaled(cache, 0, 0);
+            e.Graphics.DrawImageUnscaled(cache, -Offset.X, -Offset.Y);
         }
 
         static Bitmap Render(Size size, bool fast)
@@ -325,10 +340,17 @@ public static class ClaudeBg
         public int OriginalExStyle;
         public int Alpha = 255;        // what the Claude window has now
         public int Goal = 255;         // what it is fading to
+        public int FadeFrom = 255;     // where the running fade started
+        public int FadeStart;          // tick count it started at
         public bool Shown;             // false while hidden or minimized, so its next appearance animates
+        public bool WasMinimized;      // how it went away, which decides how it comes back
+        public bool Landing;           // appearing: opaque, image out of sight, until Windows' animation ends
         public bool Moving;            // inside a drag or resize
-        public int HoldUntil;          // tick count: keep the image hidden until Windows' animation ends
-        public Rectangle Last = Rectangle.Empty;
+        public int HoldUntil;          // tick count: when Windows' animation ends
+        public Rectangle HoldRect;     // where the image may be while a size change animates
+        public Rectangle Last = Rectangle.Empty;   // where the Claude window was at the last sync
+        public Rectangle Placed = Rectangle.Empty; // where its background window is
+        public int Corners = -1;       // corner preference given to the background window
         public Guid Desktop = Guid.Empty;
         public BgForm Form;
     }
@@ -588,11 +610,19 @@ public static class ClaudeBg
 
     static byte ToAlpha(double opacity) { return (byte)Math.Round(Math.Max(0.3, Math.Min(1.0, opacity)) * 255); }
 
-    // Honours Windows' "Animation effects" setting.
+    // Honours Windows' "Animation effects" setting: windows fade in, maximize and snap with it.
     static bool Animations()
     {
         int on = 1;
         return !SystemParametersInfo(SPI_GETCLIENTAREAANIMATION, 0, ref on, 0) || on != 0;
+    }
+
+    // Minimizing and restoring animate under a setting of their own ("Animate windows when minimizing
+    // and maximizing"), which can be off while the rest is on.
+    static bool MinimizeAnimations()
+    {
+        var info = new ANIMATIONINFO { Size = Marshal.SizeOf(typeof(ANIMATIONINFO)), MinAnimate = 1 };
+        return !SystemParametersInfoAnimation(SPI_GETANIMATION, (uint)info.Size, ref info, 0) || info.MinAnimate != 0;
     }
 
     static void WriteAlpha(Attachment a, int alpha)
@@ -601,23 +631,40 @@ public static class ClaudeBg
         a.Alpha = alpha;
     }
 
+    const int FadeMs = 180;
+
     static void SetAlpha(Attachment a, int goal, bool fade)
     {
-        a.Goal = goal;
+        if (a.Goal != goal)
+        {
+            // A new goal restarts the fade from wherever the window is now, so it never jumps.
+            a.FadeFrom = a.Alpha;
+            a.FadeStart = Environment.TickCount;
+            a.Goal = goal;
+        }
         if (a.Alpha == goal) return;
         if (!fade || !Animations()) WriteAlpha(a, goal);
         else if (!fadeTimer.Enabled) fadeTimer.Start();
     }
 
-    // One step of every running fade, easing out over about 150 ms.
+    // Where a fade is after elapsed ms: eased out (cubic), so it starts quickly and settles gently, and it
+    // takes the same time however the timer ticks.
+    static int FadeAlpha(int from, int goal, int elapsed)
+    {
+        if (elapsed >= FadeMs) return goal;
+        double t = 1 - Math.Max(0, elapsed) / (double)FadeMs;
+        return from + (int)Math.Round((goal - from) * (1 - t * t * t));
+    }
+
+    // One frame of every running fade.
     static void FadeStep()
     {
         bool running = false;
+        int now = Environment.TickCount;
         foreach (var a in attached.Values.ToList())
         {
             if (a.Alpha == a.Goal) continue;
-            int diff = a.Goal - a.Alpha, step = Math.Max(3, Math.Abs(diff) / 4);
-            WriteAlpha(a, Math.Abs(diff) <= step ? a.Goal : a.Alpha + Math.Sign(diff) * step);
+            WriteAlpha(a, FadeAlpha(a.FadeFrom, a.Goal, unchecked(now - a.FadeStart)));
             if (a.Alpha == a.Goal) Sync(a); // a fade to opaque ends by hiding the image
             else running = true;
         }
@@ -652,6 +699,33 @@ public static class ClaudeBg
         if (IsWindowVisible(a.Form.Handle)) ShowWindow(a.Form.Handle, 0);
     }
 
+    // Shows the background at place, just under its Claude window, with the image laid out for canvas.
+    static void PlaceBg(Attachment a, Rectangle place, Rectangle canvas)
+    {
+        var fh = a.Form.Handle;
+        var offset = new Point(place.X - canvas.X, place.Y - canvas.Y);
+        bool redraw = a.Form.Canvas != canvas.Size || a.Form.Offset != offset || place.Size != a.Placed.Size;
+        a.Form.Canvas = canvas.Size;
+        a.Form.Offset = offset;
+        if (place != a.Placed || !IsWindowVisible(fh) || GetWindow(a.Target, GW_HWNDNEXT) != fh)
+            SetWindowPos(fh, a.Target, place.X, place.Y, place.Width, place.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
+        if (redraw) a.Form.Invalidate();
+        a.Placed = place;
+    }
+
+    // Windows 11 rounds the corners of Claude's window except when it is maximized or snapped; the
+    // background follows, so no corner of the image shows outside Claude's. Windows 10 ignores it.
+    static void MatchCorners(Attachment a, Rectangle rect)
+    {
+        var work = Screen.FromRectangle(rect).WorkingArea;
+        int edges = (rect.Left == work.Left ? 1 : 0) + (rect.Right == work.Right ? 1 : 0)
+                  + (rect.Top == work.Top ? 1 : 0) + (rect.Bottom == work.Bottom ? 1 : 0);
+        int corners = IsZoomed(a.Target) || edges >= 2 ? DWMWCP_DONOTROUND : DWMWCP_ROUND;
+        if (corners == a.Corners) return;
+        DwmSetWindowAttribute(a.Form.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref corners, sizeof(int));
+        a.Corners = corners;
+    }
+
     static void ApplyCaptureAffinity(Attachment a)
     {
         SetWindowDisplayAffinity(a.Form.Handle, cfg.HideInCapture ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
@@ -662,16 +736,17 @@ public static class ClaudeBg
         foreach (var a in attached.Values.ToList()) Sync(a);
     }
 
-    // The rule throughout: whenever the image is not behind a Claude window, that window is opaque,
-    // so Claude never shows the desktop through itself. The image comes in behind an opaque window,
-    // which then fades to its opacity.
+    // The rule throughout: Claude shows the desktop through itself as little as Windows allows. The image
+    // comes in behind an opaque window, which then fades to its opacity, and never shows outside it.
     static void Sync(Attachment a)
     {
         if (!IsWindow(a.Target)) { Detach(a); return; }
-        if (!IsWindowVisible(a.Target) || IsIconic(a.Target))
+        bool minimized = IsIconic(a.Target);
+        if (!IsWindowVisible(a.Target) || minimized)
         {
             // Hidden or minimized: opaque now, so its restore animation runs opaque too.
             a.Shown = false;
+            a.WasMinimized = minimized;
             SetAlpha(a, 255, false);
             HideBg(a);
             return;
@@ -682,32 +757,49 @@ public static class ClaudeBg
         var rect = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
         var fh = a.Form.Handle;
         int now = Environment.TickCount;
-
-        // Opening, restoring, maximizing and snapping animate in DWM while the window already reports
-        // where it ends: an image there would show around the animating window. Wait them out.
-        if (!a.Shown) { a.Shown = true; a.HoldUntil = now + AnimationHoldMs; }
-        else if (rect != a.Last && !a.Moving && IsWindowVisible(fh)) a.HoldUntil = now + AnimationHoldMs;
         bool holding = unchecked(a.HoldUntil - now) > 0;
-        if (holding && !holdTimer.Enabled) holdTimer.Start();
 
-        if (!enabled || bgImage == null || a.Moving || holding)
+        if (!a.Shown)
         {
-            // Off (or no image yet) fades out; a drag (like Windows' own acrylic) or an animation turns opaque at once.
-            SetAlpha(a, 255, !a.Moving && !holding);
-            if (a.Alpha == 255) HideBg(a);
-            a.Last = rect;
+            // Opening and restoring animate in DWM while the window already reports where it ends, so an
+            // image there would show around it: it stays opaque without one until the animation is over.
+            // Without the animation there is nothing to wait for.
+            a.Shown = true;
+            bool animates = a.WasMinimized ? MinimizeAnimations() : Animations();
+            a.Landing = animates;
+            a.HoldUntil = animates ? now + AnimationHoldMs : now;
+            holding = animates;
+        }
+        else if (rect.Size != a.Last.Size && !a.Moving && IsWindowVisible(fh) && Animations())
+        {
+            // Maximizing, restoring down and snapping animate a picture of the window taken before, with
+            // the opacity it had then, between its old and new frame: making it opaque now would not show.
+            // That picture always covers what both frames share, so the image stays just there meanwhile.
+            a.HoldRect = Rectangle.Intersect(holding ? a.HoldRect : a.Placed, rect);
+            a.HoldUntil = now + AnimationHoldMs;
+            holding = true;
+        }
+        // A plain move does not animate: the image simply follows below.
+        if (holding && !holdTimer.Enabled) holdTimer.Start();
+        if (!holding) a.Landing = false;
+        a.Last = rect;
+
+        if (!enabled || bgImage == null || a.Moving || a.Landing)
+        {
+            // Off (or no image yet) fades out; a drag (like Windows' own acrylic) or a landing turns opaque at once.
+            SetAlpha(a, 255, !a.Moving && !a.Landing);
+            if (a.Alpha == 255) { HideBg(a); a.Placed = Rectangle.Empty; }
             return;
         }
 
-        bool moved = rect != a.Last || !IsWindowVisible(fh);
-        bool zWrong = GetWindow(a.Target, GW_HWNDNEXT) != fh;
-        if (moved || zWrong)
+        MatchCorners(a, rect);
+        if (holding)
         {
-            SetWindowPos(fh, a.Target, rect.X, rect.Y, rect.Width, rect.Height,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
-            if (rect.Size != a.Last.Size) a.Form.Invalidate();
-            a.Last = rect;
+            if (a.HoldRect.IsEmpty) { HideBg(a); a.Placed = Rectangle.Empty; }
+            else PlaceBg(a, a.HoldRect, rect);
+            return; // the opacity stays as it was, so the animation lands without a flash
         }
+        PlaceBg(a, rect, rect);
         SetAlpha(a, ToAlpha(Focused(a) ? cfg.Focused : cfg.Unfocused), true);
 
         // Keep the background on the same virtual desktop as its Claude window.

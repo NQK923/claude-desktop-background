@@ -44,6 +44,7 @@ static class Tests
             DataFolder();
             SlideDeck();
             ThemeSampling();
+            Fading();
             AsyncLoading();
             Processes();
         }
@@ -185,6 +186,23 @@ static class Tests
         Check("one image already on screen: nothing new", Call("TakeSlide") == null);
         UseSlideFolder(Path.Combine(dir, "nowhere"));
         Check("missing folder: nothing", Call("TakeSlide") == null);
+    }
+
+    static void Fading()
+    {
+        Func<int, int, int, int> at = (from, goal, ms) => (int)Call("FadeAlpha", from, goal, ms);
+        int total = (int)app.GetField("FadeMs", Any).GetValue(null);
+        Check("fade starts where it was", at(255, 191, 0) == 255);
+        Check("fade ends on its goal", at(255, 191, total) == 191 && at(191, 255, total + 500) == 255);
+        Check("fade eases out (more than half way at half time)", at(255, 191, total / 2) < 223);
+        bool monotonic = true;
+        for (int ms = 1; ms <= total; ms++)
+        {
+            if (at(255, 191, ms) > at(255, 191, ms - 1)) monotonic = false;
+            if (at(191, 255, ms) < at(191, 255, ms - 1)) monotonic = false;
+        }
+        Check("fade never turns back", monotonic);
+        Check("a clock that went backwards holds the start", at(255, 191, -50) == 255);
     }
 
     static bool? Sample(Color fill, Color text)
