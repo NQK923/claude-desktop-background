@@ -11,7 +11,7 @@ Puts an image behind the Claude desktop app window on Windows and makes that win
 - Smooth: attaches the moment Claude opens, fades opacity instead of jumping, and keeps the image out of sight while Windows animates opening, restoring, maximizing, snapping or dragging the window, so it never shows around the animating window. Claude is opaque whenever its image is not behind it. Respects Windows' "Animation effects" setting
 - Option to keep the image out of screenshots and screen sharing (Teams, Zoom, Snipping Tool)
 - Start with Windows from the tray menu
-- Loads JPEG, PNG, BMP, GIF and TIFF; WebP, HEIC, AVIF and JPEG XL when Windows has their codec (free "... Image Extensions" in the Microsoft Store). Large photos are shrunk to your screen size on load
+- Loads JPEG, PNG, BMP, GIF and TIFF; WebP, HEIC, AVIF and JPEG XL when Windows has their codec (free "... Image Extensions" in the Microsoft Store). Large photos are shrunk to your screen size on load, and phone photos are turned the right way up (EXIF orientation)
 - Separate opacity while you use Claude and while you are in another app
 - `Ctrl+Alt+B` (or double-click the tray icon) turns it on and off, for screen sharing or reading closely
 - Blur, dim and tint (black, dark red, dark blue or any color)
@@ -19,7 +19,7 @@ Puts an image behind the Claude desktop app window on Windows and makes that win
 - Image position: left/center/right and top/middle/bottom
 - Slideshow from a folder, every 5/15/30/60 minutes
 - Change or reload the image while it runs; the tray icon is cut from the image
-- Restores Claude's window when it exits, crashes or Windows signs out
+- Restores Claude's window when it exits, crashes or Windows signs out. Until an image is chosen, Claude stays fully opaque
 - Command line `--toggle`, `--next` and `--restore` for other hotkey tools or a Stream Deck
 
 ## Requirements
@@ -48,7 +48,7 @@ powershell -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File claude-bg.ps1
 
 ## Usage
 
-Everything is set from the tray icon's menu and saved in `settings.ini` next to the program. Choose **Exit (restore Claude window)** to quit.
+Everything is set from the tray icon's menu and saved in `settings.ini` next to the program. If that folder cannot be written (for example under Program Files), settings, the log and the chosen image go to `%LOCALAPPDATA%\ClaudeBg` instead; **Open settings folder** shows which. Paths in `settings.ini` may be relative to it. Choose **Exit (restore Claude window)** to quit. Starting the program again while it runs points you to its tray icon.
 
 | Command | Does |
 | --- | --- |
@@ -56,7 +56,7 @@ Everything is set from the tray icon's menu and saved in `settings.ini` next to 
 | `ClaudeBg.exe --next` | Shows the next slideshow image |
 | `ClaudeBg.exe --restore` | Exits and restores Claude's window; if the program was killed, makes Claude's window opaque again |
 
-Errors are written to `claude-bg.log` next to the program.
+Errors are written to `claude-bg.log` in the settings folder; it trims itself past 1 MB.
 
 ## Limitation
 
