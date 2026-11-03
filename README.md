@@ -8,6 +8,7 @@ Puts an image behind the Claude desktop app window on Windows and makes that win
 
 - Background image follows each Claude window as it moves, resizes, minimizes, closes or changes virtual desktop (event-driven)
 - Works with several Claude windows at once
+- Smooth: attaches the moment Claude opens, fades opacity instead of jumping, and keeps the image out of sight while Windows animates opening, restoring, maximizing, snapping or dragging the window, so it never shows around the animating window. Claude is opaque whenever its image is not behind it. Respects Windows' "Animation effects" setting
 - Option to keep the image out of screenshots and screen sharing (Teams, Zoom, Snipping Tool)
 - Start with Windows from the tray menu
 - Loads JPEG, PNG, BMP, GIF and TIFF; WebP, HEIC, AVIF and JPEG XL when Windows has their codec (free "... Image Extensions" in the Microsoft Store). Large photos are shrunk to your screen size on load
