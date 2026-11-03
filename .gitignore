@@ -1,8 +1,9 @@
 # Built output
 *.exe
 
-# Personal settings and background images
+# Personal settings, log and background images
 settings.ini
+*.log
 *.jpg
 *.jpeg
 *.png
