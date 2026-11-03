@@ -1,0 +1,10 @@
+# Built output
+*.exe
+
+# Personal settings and background images
+settings.ini
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
