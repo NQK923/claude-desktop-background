@@ -16,9 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build ClaudeBg.exe
+      - name: Build ClaudeBg.exe and run the tests
         shell: powershell
-        run: ./build.ps1
+        run: ./tests/run-tests.ps1
 
       - uses: actions/upload-artifact@v7
         with:
