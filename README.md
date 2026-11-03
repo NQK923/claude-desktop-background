@@ -6,7 +6,11 @@ Puts an image behind the Claude desktop app window on Windows and makes that win
 
 ## Features
 
-- Background image follows the Claude window as it moves, resizes, minimizes and closes (event-driven, no CPU while idle)
+- Background image follows each Claude window as it moves, resizes, minimizes, closes or changes virtual desktop (event-driven)
+- Works with several Claude windows at once
+- Option to keep the image out of screenshots and screen sharing (Teams, Zoom, Snipping Tool)
+- Start with Windows from the tray menu
+- Loads JPEG, PNG, BMP, GIF and TIFF; WebP, HEIC, AVIF and JPEG XL when Windows has their codec (free "... Image Extensions" in the Microsoft Store). Large photos are shrunk to your screen size on load
 - Separate opacity while you use Claude and while you are in another app
 - `Ctrl+Alt+B` (or double-click the tray icon) turns it on and off, for screen sharing or reading closely
 - Blur, dim and tint (black, dark red, dark blue or any color)
@@ -25,15 +29,15 @@ Windows 10/11 with .NET Framework 4.x (built in). No other dependencies.
 
 1. Download `ClaudeBg.exe` from the [latest release](../../releases/latest) into a folder of its own.
 2. Put a background image next to it named `bg.jpg`, or pick one later from the tray menu.
-3. Run `ClaudeBg.exe`. A "Claude background" icon appears in the tray.
+3. Run `ClaudeBg.exe`. A "Claude background" icon appears in the tray. Tick **Start with Windows** in its menu to keep it.
+
+The exe is not code-signed, so Windows SmartScreen may warn on first run ("More info", then "Run anyway"). Each release lists the file's SHA256 so you can check the download, or build it yourself from source.
 
 ### Build it yourself
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
-
-To start it with Windows, put a shortcut to `ClaudeBg.exe` in `shell:startup`.
 
 Without building, `claude-bg.ps1` compiles and runs the same code:
 

@@ -4,6 +4,6 @@
 # Everything is set from the tray icon ("Claude background") and saved in settings.ini.
 # Exit from the tray icon to restore the window. Ctrl+Alt+B turns the background on and off.
 
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-Add-Type -Path "$PSScriptRoot\ClaudeBg.cs" -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing, PresentationCore, WindowsBase, System.Xaml
+Add-Type -Path "$PSScriptRoot\ClaudeBg.cs" -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core, PresentationCore, WindowsBase, System.Xaml
 [ClaudeBg]::Run($PSScriptRoot)
