@@ -17,7 +17,7 @@ Puts an image behind the Claude desktop app window on Windows and makes that win
 - Blur, dim and tint (black, dark red, dark blue or any color)
 - Separate dim for Claude's light and dark theme, detected from Claude's own window
 - Image position: left/center/right and top/middle/bottom
-- Slideshow from a folder, every 5/15/30/60 minutes
+- Slideshow from a folder, every 5/15/30/60 minutes: shuffled, every image once before any repeats, decoded in the background so nothing stutters, and paused while Claude is out of sight
 - Change or reload the image while it runs; the tray icon is cut from the image
 - Restores Claude's window when it exits, crashes or Windows signs out. Until an image is chosen, Claude stays fully opaque
 - Command line `--toggle`, `--next` and `--restore` for other hotkey tools or a Stream Deck
@@ -38,6 +38,12 @@ The exe is not code-signed, so Windows SmartScreen may warn on first run ("More 
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+To build and run the tests too (no Claude window needed; CI runs them on every push):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File testsun-tests.ps1
 ```
 
 Without building, `claude-bg.ps1` compiles and runs the same code:

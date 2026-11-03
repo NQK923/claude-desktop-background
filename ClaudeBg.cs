@@ -20,9 +20,9 @@ using Timer = System.Windows.Forms.Timer;
 [assembly: AssemblyProduct("Claude background")]
 [assembly: AssemblyDescription("Shows an image behind the Claude desktop window. Unofficial.")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 NQK923, MIT License")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
-[assembly: AssemblyInformationalVersion("1.3.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyInformationalVersion("1.4.0")]
 
 // Shows an image behind each Claude desktop window and makes those windows semi-transparent.
 // Build with build.ps1 (ClaudeBg.exe), or run claude-bg.ps1. Settings live in settings.ini next to it.
@@ -422,7 +422,7 @@ public static class ClaudeBg
         if (DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) != 0) return null;
         int w = r.Right - r.Left, h = r.Bottom - r.Top;
         if (w < 40 || h < 40) return null;
-        using (var b = new Bitmap(w, h))
+        using (var b = new Bitmap(w, h, PixelFormat.Format32bppRgb))
         {
             using (var g = Graphics.FromImage(b))
             {
@@ -431,18 +431,27 @@ public static class ClaudeBg
                 g.ReleaseHdc(dc);
                 if (!ok) return null;
             }
-            var counts = new Dictionary<int, int>();
-            for (int y = h / 20; y < h; y += h / 20)
-                for (int x = w / 40; x < w; x += w / 40)
-                {
-                    int c = b.GetPixel(x, y).ToArgb() & 0xFFFFFF, n;
-                    counts.TryGetValue(c, out n);
-                    counts[c] = n + 1;
-                }
-            int top = counts.OrderByDescending(kv => kv.Value).First().Key;
-            if (top == 0) return null; // pure black: the capture failed
-            return Color.FromArgb(top).GetBrightness() < 0.5f;
+            var data = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, b.PixelFormat);
+            try { return DarkFromSamples(data.Scan0, data.Stride, w, h); }
+            finally { b.UnlockBits(data); }
         }
+    }
+
+    // Votes a 40 x 20 grid of pixels for the most common colour (the page background) and says whether it
+    // is dark; null for pure black, which is what a failed capture gives.
+    static bool? DarkFromSamples(IntPtr scan0, int stride, int w, int h)
+    {
+        var counts = new Dictionary<int, int>();
+        for (int y = h / 20; y < h; y += h / 20)
+            for (int x = w / 40; x < w; x += w / 40)
+            {
+                int c = Marshal.ReadInt32(scan0, y * stride + x * 4) & 0xFFFFFF, n;
+                counts.TryGetValue(c, out n);
+                counts[c] = n + 1;
+            }
+        int top = counts.OrderByDescending(kv => kv.Value).First().Key;
+        if (top == 0) return null;
+        return Color.FromArgb(top).GetBrightness() < 0.5f;
     }
 
     // Reading Claude's window costs a full capture, so it happens on attach, when Claude comes to the
@@ -835,20 +844,60 @@ public static class ClaudeBg
         }
     }
 
+    // Bumped by every image change, so a slow load that finishes after a newer choice is thrown away.
+    static int loadSeq;
+
     static bool TrySetImage(string path, bool loud)
     {
+        loadSeq++;
         Bitmap img;
         try { img = LoadImage(path); }
-        catch (Exception ex)
+        catch (Exception ex) { LoadFailed(path, ex, loud); return false; }
+        ShowImage(img, path);
+        return true;
+    }
+
+    // Decodes on a thread of its own and swaps the image in on the UI thread: a large photo or a HEIC
+    // can take a second to decode, which would otherwise stall fades and drags. Used where nobody waits
+    // on the result (slideshow, a new display); done, if given, gets whether it worked.
+    static void SetImageAsync(string path, Action<bool> done)
+    {
+        int seq = ++loadSeq;
+        var worker = new Thread(() =>
         {
-            Log("Could not load " + path + ": " + ex.Message);
-            string ext = Path.GetExtension(path).ToLowerInvariant();
-            string hint = CodecExts.Contains(ext)
-                ? "\n\nWindows needs a codec for " + ext + " files: search the Microsoft Store for \"" + ext.Substring(1).ToUpperInvariant() + " Image Extensions\"."
-                : "";
-            if (loud) MessageBox.Show("Could not load the image:\n" + ex.Message + hint, "Claude background");
-            return false;
-        }
+            Bitmap img = null;
+            Exception error = null;
+            try { img = LoadImage(path); }
+            catch (Exception ex) { error = ex; }
+            try
+            {
+                ui.Post(_ =>
+                {
+                    if (seq != loadSeq) { if (img != null) img.Dispose(); return; } // a newer choice won
+                    if (img != null) ShowImage(img, path); else LoadFailed(path, error, false);
+                    if (done != null) done(img != null);
+                }, null);
+            }
+            catch (Exception) { if (img != null) img.Dispose(); } // the program is closing: nowhere to show it
+        });
+        worker.IsBackground = true;
+        worker.SetApartmentState(ApartmentState.STA); // WIC's codecs expect it
+        worker.Start();
+    }
+
+    static void LoadFailed(string path, Exception ex, bool loud)
+    {
+        Log("Could not load " + path + ": " + ex.Message);
+        if (!loud) return;
+        string ext = Path.GetExtension(path).ToLowerInvariant();
+        string hint = CodecExts.Contains(ext)
+            ? "\n\nWindows needs a codec for " + ext + " files: search the Microsoft Store for \"" + ext.Substring(1).ToUpperInvariant() + " Image Extensions\"."
+            : "";
+        MessageBox.Show("Could not load the image:\n" + ex.Message + hint, "Claude background");
+    }
+
+    static void ShowImage(Bitmap img, string path)
+    {
         var old = bgImage;
         bgImage = img;
         foreach (var a in attached.Values) a.Form.DropCache();
@@ -858,21 +907,50 @@ public static class ClaudeBg
         if (oldIcon != null) oldIcon.Dispose();
         currentImage = path;
         SyncAll(); // the first image brings the backgrounds in
-        return true;
     }
 
     static string[] SlideFiles()
     {
-        if (!Directory.Exists(cfg.SlideFolder)) return new string[0];
-        return Directory.GetFiles(cfg.SlideFolder)
-            .Where(f => ImageExts.Contains(Path.GetExtension(f).ToLowerInvariant())).ToArray();
+        if (string.IsNullOrEmpty(cfg.SlideFolder) || !Directory.Exists(cfg.SlideFolder)) return new string[0];
+        try
+        {
+            return Directory.GetFiles(cfg.SlideFolder)
+                .Where(f => ImageExts.Contains(Path.GetExtension(f).ToLowerInvariant())).ToArray();
+        }
+        catch (Exception ex) { Log("Could not list " + cfg.SlideFolder + ": " + ex.Message); return new string[0]; }
     }
 
-    static void NextSlide()
+    // The slideshow deals the folder like a shuffled deck: every image once before any comes again,
+    // and a new round never starts with the image on screen. Files added or removed are picked up.
+    static readonly List<string> slideDeck = new List<string>();
+
+    static string TakeSlide()
     {
-        var choices = SlideFiles().Where(f => !string.Equals(f, currentImage, StringComparison.OrdinalIgnoreCase)).ToArray();
-        for (int tries = 0; tries < 5 && choices.Length > 0; tries++)
-            if (TrySetImage(choices[rng.Next(choices.Length)], false)) return;
+        var files = SlideFiles();
+        if (files.Length == 0) return null;
+        var present = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
+        slideDeck.RemoveAll(f => !present.Contains(f));
+        if (slideDeck.Count == 0)
+        {
+            slideDeck.AddRange(files.OrderBy(f => rng.Next()));
+            if (slideDeck.Count > 1 && string.Equals(slideDeck[0], currentImage, StringComparison.OrdinalIgnoreCase))
+            {
+                slideDeck.Add(slideDeck[0]);
+                slideDeck.RemoveAt(0);
+            }
+        }
+        var next = slideDeck[0];
+        slideDeck.RemoveAt(0);
+        if (files.Length == 1 && string.Equals(next, currentImage, StringComparison.OrdinalIgnoreCase)) return null; // nothing new
+        return next;
+    }
+
+    static void NextSlide() { NextSlide(5); }
+
+    static void NextSlide(int tries)
+    {
+        var next = tries > 0 ? TakeSlide() : null;
+        if (next != null) SetImageAsync(next, ok => { if (!ok) NextSlide(tries - 1); });
     }
 
     static void ConfigureSlideshow()
@@ -1157,7 +1235,8 @@ public static class ClaudeBg
         tray.ContextMenuStrip = BuildMenu();
         tray.DoubleClick += (s, e) => Toggle();
         slideTimer = new Timer();
-        slideTimer.Tick += (s, e) => NextSlide();
+        // No point decoding a new image while none is on screen; the next tick after Claude returns changes it.
+        slideTimer.Tick += (s, e) => { if (attached.Values.Any(a => IsWindowVisible(a.Form.Handle))) NextSlide(); };
         fadeTimer = new Timer { Interval = 15 };
         fadeTimer.Tick += (s, e) => FadeStep();
         holdTimer = new Timer { Interval = 50 };
@@ -1169,7 +1248,14 @@ public static class ClaudeBg
         };
         UpdateTrayText();
 
-        if (cfg.SlideMinutes > 0 && SlideFiles().Length > 0) NextSlide();
+        // At startup the first slide loads right here, so the fallbacks below know whether one did.
+        if (cfg.SlideMinutes > 0)
+            for (int tries = 0; tries < 5 && currentImage == null; tries++)
+            {
+                var slide = TakeSlide();
+                if (slide == null) break;
+                TrySetImage(slide, false);
+            }
         if (currentImage == null)
         {
             // The saved image, else a bg.jpg next to the settings or the program. With none at all, Claude
@@ -1207,7 +1293,7 @@ public static class ClaudeBg
             if (currentImage != null && bgImage != null)
             {
                 var screen = LargestScreen();
-                if (bgImage.Width < screen.Width || bgImage.Height < screen.Height) TrySetImage(currentImage, false);
+                if (bgImage.Width < screen.Width || bgImage.Height < screen.Height) SetImageAsync(currentImage, null);
             }
         }, null);
 
