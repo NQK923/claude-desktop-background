@@ -1251,7 +1251,7 @@ public static partial class ClaudeBg
             i => cfg.Scene == scenes[i], i => { cfg.Scene = scenes[i]; ChangeDeskPreferences(); }));
         menu.Items.Add(ChoiceMenu("Mode", new[] { "Focus", "Relax", "Present (opaque Claude)" },
             i => cfg.Mode == (DeskMode)i, i => { cfg.Mode = (DeskMode)i; ChangeDeskPreferences(); }));
-        var companionItem = new ToolStripMenuItem("Show Nếp companion");
+        var companionItem = new ToolStripMenuItem("Show Sunny companion");
         companionItem.Click += (s, e) => { cfg.CompanionVisible = !cfg.CompanionVisible; ChangeDeskPreferences(); };
         menu.Items.Add(companionItem);
         var focusItem = new ToolStripMenuItem("Start focus session");

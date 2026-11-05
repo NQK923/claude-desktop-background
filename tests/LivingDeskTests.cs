@@ -19,6 +19,7 @@ static partial class Tests
         FocusTiming();
         CompanionPlacement();
         SceneRendering(output);
+        SunnyRendering(output);
         StudioRendering(output);
         FocusProgressIntegration();
     }
@@ -248,6 +249,45 @@ static partial class Tests
         return (Form)Activator.CreateInstance(app.GetNestedType(name, Any), true);
     }
 
+    static Bitmap PaintSunnyPreview(SceneFrame frame, bool celebrate)
+    {
+        var bitmap = new Bitmap(420, 340, PixelFormat.Format32bppArgb);
+        using (var graphics = Graphics.FromImage(bitmap))
+            ClaudeBg.PaintSunny(graphics, new Rectangle(0, 0, bitmap.Width, bitmap.Height), frame, celebrate);
+        return bitmap;
+    }
+
+    static void SunnyRendering(string output)
+    {
+        var frame = PreviewFrame(SceneKind.RainyStudy, DeskMode.Relax, 12, 0.7f);
+        using (var idle = PaintSunnyPreview(frame, false))
+        using (var repeat = PaintSunnyPreview(frame, false))
+        using (var celebration = PaintSunnyPreview(frame, true))
+        {
+            Check("Sunny rendering is deterministic", Fingerprint(idle) == Fingerprint(repeat));
+            Check("Sunny visibly celebrates completion", Fingerprint(idle) != Fingerprint(celebration));
+            idle.Save(Path.Combine(output, "Sunny-closeup.png"), ImageFormat.Png);
+            celebration.Save(Path.Combine(output, "Sunny-celebrate.png"), ImageFormat.Png);
+        }
+        frame.Motion = 0;
+        frame.Seconds = 0;
+        using (var still = PaintSunnyPreview(frame, false))
+        {
+            frame.Seconds = 99;
+            frame.Pointer = new PointF(0.9f, 0.1f);
+            using (var later = PaintSunnyPreview(frame, false)) Check("Sunny zero motion freezes time and gaze", Fingerprint(still) == Fingerprint(later));
+        }
+        frame.Mode = DeskMode.Present;
+        frame.Motion = 1;
+        frame.Seconds = 1;
+        using (var still = PaintSunnyPreview(frame, false))
+        {
+            frame.Seconds = 90;
+            frame.Pointer = new PointF(0, 1);
+            using (var later = PaintSunnyPreview(frame, false)) Check("Sunny presentation preview stays still", Fingerprint(still) == Fingerprint(later));
+        }
+    }
+
     static void PrepareSnapshot(Form form)
     {
         // Hidden Forms do not create visible native child controls. Show off-screen and pump their
@@ -317,7 +357,7 @@ static partial class Tests
             using (var bitmap = new Bitmap(companionForm.Width, companionForm.Height))
             {
                 companionForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-                bitmap.Save(Path.Combine(output, "Nep.png"), ImageFormat.Png);
+                bitmap.Save(Path.Combine(output, "Sunny.png"), ImageFormat.Png);
                 Check("companion snapshot contains the character and controls", HasSnapshotContent(bitmap));
             }
             Check("companion draws without Claude or a running timer", companionForm.Width > 0 && companionForm.Height > 0);
@@ -328,7 +368,7 @@ static partial class Tests
             using (var bitmap = new Bitmap(companionForm.Width, companionForm.Height))
             {
                 companionForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-                bitmap.Save(Path.Combine(output, "Nep-compact.png"), ImageFormat.Png);
+                bitmap.Save(Path.Combine(output, "Sunny-compact.png"), ImageFormat.Png);
                 Check("compact snapshot contains the character", HasSnapshotContent(bitmap));
             }
             Check("compact companion paints inside its dock", companionForm.Width == 94 && companionForm.Height == 110);

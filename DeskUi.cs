@@ -124,8 +124,8 @@ public static partial class ClaudeBg
         switch (mode)
         {
             case DeskMode.Relax: return "A little more movement. A little room to wander.";
-            case DeskMode.Present: return "A still scene. N\u1ebfp steps away while you present.";
-            default: return "Gentle motion. N\u1ebfp settles down while you focus.";
+            case DeskMode.Present: return "A still scene. Sunny steps away while you present.";
+            default: return "Gentle motion. Sunny settles down while you focus.";
         }
     }
 
@@ -367,7 +367,7 @@ public static partial class ClaudeBg
             motion = MakeSlider("Motion", 0, 100);
             motionValue = AddSlider(settings, "Motion", motion, Font);
             animations = new CheckBox { Text = "Animate scenes", AutoSize = true, Name = "AnimateScenes", AccessibleName = "Animate scenes" };
-            companionToggle = new CheckBox { Text = "Show N\u1ebfp companion", AutoSize = true, Name = "ShowCompanion", AccessibleName = "Show Nep companion" };
+            companionToggle = new CheckBox { Text = "Show Sunny companion", AutoSize = true, Name = "ShowCompanion", AccessibleName = "Show Sunny companion" };
             AddSetting(settings, animations, 0, 4);
             AddSetting(settings, companionToggle, 0, 13);
             AddSetting(settings, DeskLabel("Focus length", Font, "ink"), 0, 5);
@@ -632,7 +632,7 @@ public static partial class ClaudeBg
         }
     }
 
-    // No-activate means pressing a timer button or greeting Nếp does not move keyboard focus away
+    // No-activate means pressing a timer button or greeting Sunny does not move keyboard focus away
     // from the Claude composer. Opening Studio is an explicit action and may activate that window.
     sealed class CompanionForm : Form
     {
@@ -649,8 +649,8 @@ public static partial class ClaudeBg
 
         public CompanionForm()
         {
-            Text = "N\u1ebfp \u00b7 Living Desk";
-            Name = "NepCompanion";
+            Text = "Sunny \u00b7 Living Desk";
+            Name = "SunnyCompanion";
             AutoScaleDimensions = new SizeF(96, 96);
             AutoScaleMode = AutoScaleMode.Dpi;
             Font = OwnFont(9F, FontStyle.Regular);
@@ -670,14 +670,14 @@ public static partial class ClaudeBg
             var title = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0) };
             title.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             title.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            title.Controls.Add(DeskLabel("N\u1ebfp", OwnFont(13F, FontStyle.Bold), "ink"), 0, 0);
+            title.Controls.Add(DeskLabel("Sunny", OwnFont(13F, FontStyle.Bold), "ink"), 0, 0);
             var hide = DeskButton("\u00d7", false, true);
             hide.MinimumSize = new Size(24, 24); hide.Padding = new Padding(0); hide.Margin = new Padding(0);
             hide.TabStop = false; hide.AccessibleName = "Hide companion";
             hide.Click += delegate { cfg.CompanionVisible = false; ChangeDeskPreferences(); };
             title.Controls.Add(hide, 1, 0);
             fullLayout.Controls.Add(title, 0, 0);
-            avatar = new CompanionAvatar(this, false) { Dock = DockStyle.Fill, Margin = new Padding(0), MinimumSize = new Size(80, 84), AccessibleName = "Greet Nep" };
+            avatar = new CompanionAvatar(this, false) { Dock = DockStyle.Fill, Margin = new Padding(0), MinimumSize = new Size(80, 84), AccessibleName = "Greet Sunny" };
             avatar.Click += delegate { Greet(); };
             fullLayout.Controls.Add(avatar, 0, 1);
             greeting = DeskLabel("One thing at a time.", Font, "muted");
@@ -904,20 +904,21 @@ public static partial class ClaudeBg
                 Math.Max(0, Math.Min(1, mouse.Y / (float)Math.Max(1, Height))));
             SceneFrame frame = CurrentSceneFrame(pointer);
             Rectangle art = new Rectangle(0, 0, Width, Math.Max(1, Height - (compact ? 22 : 0)));
-            PaintNep(e.Graphics, art, frame, owner.CelebrationActive);
+            PaintSunny(e.Graphics, art, frame, owner.CelebrationActive);
             if (compact)
             {
                 using (var brush = new SolidBrush(palette.Ink))
                 using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                    e.Graphics.DrawString(FocusHasSession() ? DeskTimeText(FocusSecondsRemaining()) : "N\u1ebfp", Font, brush,
+                    e.Graphics.DrawString(FocusHasSession() ? DeskTimeText(FocusSecondsRemaining()) : "Sunny", Font, brush,
                         new RectangleF(2, Height - 24, Width - 4, 22), format);
             }
         }
     }
 
-    // Nếp is a rice-shaped sprout friend drawn from paths, not a sprite or a borrowed character.
-    // Reactions come only from the pointer, chosen mode and local focus session state.
-    internal static void PaintNep(Graphics graphics, Rectangle bounds, SceneFrame frame, bool celebrate)
+    // Sunny is an original chibi sprout spirit: a big expressive face, a leaf hair clip and a mint
+    // hoodie. Cel shading, eye highlights and clean outlines stay legible in the compact dock.
+    // The painter is deterministic; motion and reactions come only from the supplied local state.
+    internal static void PaintSunny(Graphics graphics, Rectangle bounds, SceneFrame frame, bool celebrate)
     {
         if (bounds.Width <= 0 || bounds.Height <= 0 || frame == null) return;
         var state = graphics.Save();
@@ -932,124 +933,280 @@ public static partial class ClaudeBg
                 ? 0 : Math.Max(0, Math.Min(1, frame.Motion));
             double seconds = double.IsNaN(frame.Seconds) || double.IsInfinity(frame.Seconds) ? 0 : frame.Seconds % 86400;
             float breath = (float)Math.Sin(seconds * (frame.Mode == DeskMode.Relax ? 2.7 : 1.55)) * (float)live;
-            float bounce = frame.Mode == DeskMode.Relax ? breath * 2.3F : breath * 0.7F;
+            float bounce = frame.Mode == DeskMode.Relax ? breath * 2.3F : breath * 0.6F;
             if (celebrate) bounce -= (float)Math.Abs(Math.Sin(seconds * 5)) * 6F * (float)live;
-            var ink = Color.FromArgb(68, 78, 53);
-            var green = Color.FromArgb(108, 144, 83);
-            var mint = Color.FromArgb(173, 196, 122);
-            using (var shadow = new SolidBrush(Color.FromArgb(frame.Dark ? 40 : 20, 45, 64, 43)))
-                graphics.FillEllipse(shadow, 47, 133, 116, 13);
-            using (var stalk = new Pen(Color.FromArgb(110, 145, 89), 2.6F))
-            using (var leaf = new SolidBrush(mint))
-            using (var pot = new SolidBrush(Color.FromArgb(172, 133, 96)))
+            var ink = Color.FromArgb(65, 73, 60);
+            var mint = Color.FromArgb(169, 216, 185);
+            var mintShadow = Color.FromArgb(111, 171, 145);
+            var cream = Color.FromArgb(255, 242, 216);
+            var creamShadow = Color.FromArgb(235, 214, 181);
+            using (var shadow = new SolidBrush(Color.FromArgb(frame.Dark ? 55 : 25, 40, 64, 47)))
+                graphics.FillEllipse(shadow, 67, 137, 87, 10);
+
+            // A small local growth marker sits beside Sunny, leaving the face uncluttered.
+            int leaves = Math.Max(0, Math.Min(5, frame.CompletedSessions));
+            using (var stalk = new Pen(Color.FromArgb(114, 165, 116), 2.5F))
+            using (var leaf = new SolidBrush(Color.FromArgb(173, 210, 141)))
+            using (var pot = new SolidBrush(Color.FromArgb(204, 157, 122)))
+            using (var potShade = new SolidBrush(Color.FromArgb(174, 123, 97)))
+            using (var edge = new Pen(ink, 1.5F))
             {
-                graphics.DrawLine(stalk, 33, 130, 33, 112 - Math.Min(5, frame.CompletedSessions) * 3);
-                graphics.FillEllipse(leaf, 23, 111 - Math.Min(5, frame.CompletedSessions) * 3, 11, 6);
-                graphics.FillEllipse(leaf, 34, 105 - Math.Min(5, frame.CompletedSessions) * 3, 11, 6);
-                graphics.FillPolygon(pot, new[] { new PointF(24, 128), new PointF(44, 128), new PointF(41, 142), new PointF(27, 142) });
-                if (frame.CompletedSessions > 3) graphics.FillEllipse(leaf, 25, 116, 10, 5);
+                graphics.DrawLine(stalk, 34, 132, 34, 114 - leaves * 3);
+                graphics.FillEllipse(leaf, 23, 113 - leaves * 3, 12, 6);
+                graphics.FillEllipse(leaf, 35, 106 - leaves * 3, 12, 6);
+                var potShape = new[] { new PointF(24, 129), new PointF(45, 129), new PointF(42, 144), new PointF(27, 144) };
+                graphics.FillPolygon(pot, potShape);
+                graphics.FillPolygon(potShade, new[] { new PointF(38, 130), new PointF(45, 130), new PointF(42, 144), new PointF(36, 144) });
+                graphics.DrawPolygon(edge, potShape);
+                if (leaves > 3) graphics.FillEllipse(leaf, 25, 118, 10, 5);
             }
             graphics.TranslateTransform(0, bounce);
-            using (var feet = new SolidBrush(Color.FromArgb(204, 193, 153)))
+            using (var edge = new Pen(ink, 2.2F))
+            using (var skin = new SolidBrush(cream))
+            using (var skinShade = new SolidBrush(creamShadow))
+            using (var hoodie = new SolidBrush(mint))
+            using (var hoodieShade = new SolidBrush(mintShadow))
+            using (var hair = new SolidBrush(Color.FromArgb(247, 224, 173)))
+            using (var hairShade = new SolidBrush(Color.FromArgb(226, 195, 145)))
             {
-                graphics.FillEllipse(feet, 73, 125, 23, 13);
-                graphics.FillEllipse(feet, 116, 125, 23, 13);
-            }
-            using (var body = new GraphicsPath())
-            {
-                body.AddBezier(56, 102, 48, 67, 73, 31, 102, 30);
-                body.AddBezier(102, 30, 134, 24, 158, 58, 157, 96);
-                body.AddBezier(157, 96, 164, 130, 139, 136, 107, 134);
-                body.AddBezier(107, 134, 76, 137, 55, 130, 56, 102);
-                body.CloseFigure();
-                using (var fill = new LinearGradientBrush(new Rectangle(52, 29, 111, 110), Color.FromArgb(250, 242, 206), Color.FromArgb(228, 218, 177), 85F))
-                using (var edge = new Pen(Color.FromArgb(185, 177, 138), 1.6F))
-                { graphics.FillPath(fill, body); graphics.DrawPath(edge, body); }
-            }
-            using (var hand = new Pen(Color.FromArgb(229, 218, 178), 11F))
-            {
-                hand.StartCap = hand.EndCap = LineCap.Round;
-                if (celebrate)
+                edge.LineJoin = LineJoin.Round;
+                edge.StartCap = edge.EndCap = LineCap.Round;
+
+                graphics.FillEllipse(skinShade, 83, 131, 22, 13);
+                graphics.FillEllipse(skinShade, 115, 131, 22, 13);
+                graphics.DrawEllipse(edge, 83, 131, 22, 13);
+                graphics.DrawEllipse(edge, 115, 131, 22, 13);
+
+                // Sleeves sit behind the large head. Completion lifts both small mitten hands.
+                float leftX = celebrate ? 51 : 65, rightX = celebrate ? 165 : 151;
+                float handY = celebrate ? 82 : 116;
+                using (var sleeveEdge = new Pen(ink, 12F))
+                using (var sleeve = new Pen(mint, 8F))
                 {
-                    graphics.DrawLine(hand, 61, 96, 44, 77);
-                    graphics.DrawLine(hand, 153, 95, 170, 77);
+                    sleeveEdge.StartCap = sleeveEdge.EndCap = LineCap.Round;
+                    sleeve.StartCap = sleeve.EndCap = LineCap.Round;
+                    graphics.DrawLine(sleeveEdge, 84, 108, leftX, handY);
+                    graphics.DrawLine(sleeveEdge, 132, 108, rightX, handY);
+                    graphics.DrawLine(sleeve, 84, 108, leftX, handY);
+                    graphics.DrawLine(sleeve, 132, 108, rightX, handY);
+                }
+                graphics.FillEllipse(skin, leftX - 5.5F, handY - 5.5F, 11, 12);
+                graphics.FillEllipse(skin, rightX - 5.5F, handY - 5.5F, 11, 12);
+                graphics.DrawEllipse(edge, leftX - 5.5F, handY - 5.5F, 11, 12);
+                graphics.DrawEllipse(edge, rightX - 5.5F, handY - 5.5F, 11, 12);
+
+                graphics.FillEllipse(hoodieShade, 73, 91, 72, 34);
+                graphics.DrawEllipse(edge, 73, 91, 72, 34);
+                using (var body = DeskRoundedRectangle(new RectangleF(80, 102, 58, 36), 13))
+                {
+                    graphics.FillPath(hoodie, body);
+                    using (var shade = new GraphicsPath())
+                    {
+                        shade.AddBezier(128, 106, 139, 112, 137, 131, 129, 137);
+                        shade.AddLine(129, 137, 108, 137);
+                        shade.AddBezier(108, 137, 122, 131, 128, 120, 128, 106);
+                        graphics.FillPath(hoodieShade, shade);
+                    }
+                    graphics.DrawPath(edge, body);
+                }
+                using (var stitch = new Pen(Color.FromArgb(81, 135, 111), 1.4F))
+                {
+                    graphics.DrawArc(stitch, 96, 121, 26, 9, 0, 180);
+                    graphics.DrawLine(stitch, 96, 124, 96, 121);
+                    graphics.DrawLine(stitch, 122, 124, 122, 121);
+                }
+
+                graphics.FillEllipse(skinShade, 57, 70, 15, 18);
+                graphics.FillEllipse(skinShade, 146, 70, 15, 18);
+                graphics.DrawEllipse(edge, 57, 70, 15, 18);
+                graphics.DrawEllipse(edge, 146, 70, 15, 18);
+                using (var head = new GraphicsPath())
+                {
+                    head.AddBezier(63, 72, 59, 47, 80, 27, 107, 27);
+                    head.AddBezier(107, 27, 135, 25, 155, 47, 154, 73);
+                    head.AddBezier(154, 73, 159, 96, 137, 111, 109, 111);
+                    head.AddBezier(109, 111, 79, 111, 59, 96, 63, 72);
+                    head.CloseFigure();
+                    graphics.FillPath(skin, head);
+                    var clip = graphics.Save();
+                    try
+                    {
+                        graphics.SetClip(head, CombineMode.Intersect);
+                        using (var shade = new GraphicsPath())
+                        {
+                            shade.AddBezier(139, 40, 159, 62, 151, 95, 129, 102);
+                            shade.AddBezier(129, 102, 115, 108, 91, 106, 79, 100);
+                            shade.AddLine(79, 100, 90, 118);
+                            shade.AddLine(90, 118, 167, 114);
+                            shade.AddLine(167, 114, 165, 47);
+                            shade.CloseFigure();
+                            graphics.FillPath(skinShade, shade);
+                        }
+                    }
+                    finally { graphics.Restore(clip); }
+                    graphics.DrawPath(edge, head);
+                }
+
+                // Soft, pointed fringe and a small ahoge give the silhouette its anime character.
+                using (var fringe = new GraphicsPath())
+                {
+                    fringe.AddBezier(63, 65, 57, 45, 72, 28, 92, 27);
+                    fringe.AddBezier(92, 27, 91, 16, 101, 11, 109, 12);
+                    fringe.AddBezier(109, 12, 104, 17, 102, 22, 104, 27);
+                    fringe.AddBezier(104, 27, 118, 18, 143, 27, 151, 46);
+                    fringe.AddLine(151, 46, 154, 64);
+                    fringe.AddLine(154, 64, 141, 56);
+                    fringe.AddBezier(141, 56, 137, 60, 131, 62, 124, 63);
+                    fringe.AddLine(124, 63, 126, 51);
+                    fringe.AddBezier(126, 51, 121, 58, 113, 64, 106, 66);
+                    fringe.AddLine(106, 66, 108, 52);
+                    fringe.AddBezier(108, 52, 103, 58, 94, 63, 85, 65);
+                    fringe.AddLine(85, 65, 88, 53);
+                    fringe.AddBezier(88, 53, 80, 60, 70, 65, 63, 65);
+                    fringe.CloseFigure();
+                    graphics.FillPath(hair, fringe);
+                    using (var shade = new GraphicsPath())
+                    {
+                        shade.AddBezier(134, 31, 149, 38, 150, 52, 154, 64);
+                        shade.AddLine(154, 64, 141, 56);
+                        shade.AddLine(141, 56, 132, 61);
+                        shade.AddBezier(132, 61, 139, 51, 140, 42, 134, 31);
+                        graphics.FillPath(hairShade, shade);
+                    }
+                    graphics.DrawPath(edge, fringe);
+                }
+                using (var shine = new Pen(Color.FromArgb(255, 246, 220), 3.4F))
+                {
+                    shine.StartCap = shine.EndCap = LineCap.Round;
+                    graphics.DrawBezier(shine, 76, 43, 80, 37, 88, 33, 95, 33);
+                }
+
+                using (var leaf = new GraphicsPath())
+                {
+                    leaf.AddBezier(137, 48, 133, 35, 142, 27, 155, 27);
+                    leaf.AddBezier(155, 27, 156, 40, 149, 47, 137, 48);
+                    graphics.FillPath(hoodie, leaf);
+                    graphics.DrawPath(edge, leaf);
+                }
+                using (var leaf = new GraphicsPath())
+                {
+                    leaf.AddBezier(137, 48, 124, 48, 119, 41, 120, 34);
+                    leaf.AddBezier(120, 34, 133, 33, 140, 38, 137, 48);
+                    graphics.FillPath(hoodieShade, leaf);
+                    graphics.DrawPath(edge, leaf);
+                }
+                using (var vein = new Pen(Color.FromArgb(77, 132, 99), 1.3F))
+                    graphics.DrawLine(vein, 137, 47, 149, 33);
+
+                bool calm = frame.Mode == DeskMode.Focus;
+                float pointerX = float.IsNaN(frame.Pointer.X) || float.IsInfinity(frame.Pointer.X) ? 0.5F : Math.Max(0, Math.Min(1, frame.Pointer.X));
+                float pointerY = float.IsNaN(frame.Pointer.Y) || float.IsInfinity(frame.Pointer.Y) ? 0.5F : Math.Max(0, Math.Min(1, frame.Pointer.Y));
+                float gaze = calm ? 2.2F : 3.6F;
+                float dx = (pointerX - 0.5F) * gaze * (float)live;
+                float dy = (pointerY - 0.5F) * 2.4F * (float)live;
+                double blinkPhase = seconds % 6.4;
+                bool blink = live > 0 && blinkPhase > 6.18 && blinkPhase < 6.32;
+                if (celebrate || blink)
+                {
+                    using (var eyes = new Pen(ink, 3F))
+                    {
+                        eyes.StartCap = eyes.EndCap = LineCap.Round;
+                        graphics.DrawArc(eyes, 81, celebrate ? 76 : 78, 18, 11, celebrate ? 190 : 8, 164);
+                        graphics.DrawArc(eyes, 120, celebrate ? 76 : 78, 18, 11, celebrate ? 190 : 8, 164);
+                    }
                 }
                 else
                 {
-                    graphics.DrawLine(hand, 60, 99, 48, 108);
-                    graphics.DrawLine(hand, 153, 99, 163, 109);
+                    PaintSunnyEye(graphics, 80, calm ? 70 : 67, calm ? 21 : 25, dx, dy, ink, false);
+                    PaintSunnyEye(graphics, 120, calm ? 70 : 67, calm ? 21 : 25, dx, dy, ink, true);
                 }
-            }
-            using (var sprout = new Pen(green, 3F))
-            using (var leaf = new SolidBrush(green))
-            using (var lightLeaf = new SolidBrush(mint))
-            {
-                graphics.DrawBezier(sprout, 108, 34, 108, 26, 113, 23, 117, 19);
-                using (var shape = new GraphicsPath())
+
+                using (var blush = new SolidBrush(Color.FromArgb(239, 169, 151)))
+                using (var blushLine = new Pen(Color.FromArgb(210, 126, 119), 1F))
                 {
-                    shape.AddBezier(112, 28, 94, 28, 89, 17, 89, 14);
-                    shape.AddBezier(89, 14, 106, 12, 113, 20, 112, 28);
-                    graphics.FillPath(leaf, shape);
+                    graphics.FillEllipse(blush, 68, 92, 16, 7);
+                    graphics.FillEllipse(blush, 137, 92, 16, 7);
+                    for (int i = 0; i < 3; i++)
+                    {
+                        graphics.DrawLine(blushLine, 71 + i * 4, 94, 70 + i * 4, 97);
+                        graphics.DrawLine(blushLine, 140 + i * 4, 94, 139 + i * 4, 97);
+                    }
                 }
-                using (var shape = new GraphicsPath())
+                if (celebrate || frame.Mode == DeskMode.Relax)
                 {
-                    shape.AddBezier(113, 24, 114, 9, 127, 7, 134, 8);
-                    shape.AddBezier(134, 8, 132, 22, 121, 28, 113, 24);
-                    graphics.FillPath(lightLeaf, shape);
+                    using (var mouth = new SolidBrush(Color.FromArgb(106, 70, 66)))
+                    using (var tongue = new SolidBrush(Color.FromArgb(240, 164, 159)))
+                    {
+                        graphics.FillEllipse(mouth, 103, 94, 13, celebrate ? 11 : 8);
+                        graphics.FillEllipse(tongue, 106, celebrate ? 100 : 98, 7, 4);
+                    }
                 }
+                else graphics.DrawArc(edge, 103, 92, 13, 8, 15, 150);
+
                 using (var scarf = new GraphicsPath())
                 {
-                    scarf.AddBezier(67, 114, 92, 122, 129, 123, 149, 113);
-                    scarf.AddLine(149, 113, 146, 121);
-                    scarf.AddBezier(146, 121, 120, 133, 88, 130, 68, 120);
-                    scarf.CloseFigure(); graphics.FillPath(leaf, scarf);
+                    scarf.AddBezier(79, 106, 93, 113, 123, 115, 139, 105);
+                    scarf.AddLine(139, 105, 138, 112);
+                    scarf.AddBezier(138, 112, 122, 122, 94, 120, 80, 113);
+                    scarf.CloseFigure();
+                    graphics.FillPath(hoodieShade, scarf);
+                    graphics.DrawPath(edge, scarf);
                 }
-                graphics.FillPolygon(lightLeaf, new[] { new PointF(133, 120), new PointF(148, 135), new PointF(139, 136), new PointF(127, 122) });
-            }
-            bool resting = frame.Mode == DeskMode.Focus;
-            float pointerX = float.IsNaN(frame.Pointer.X) || float.IsInfinity(frame.Pointer.X) ? 0.5F : Math.Max(0, Math.Min(1, frame.Pointer.X));
-            float pointerY = float.IsNaN(frame.Pointer.Y) || float.IsInfinity(frame.Pointer.Y) ? 0.5F : Math.Max(0, Math.Min(1, frame.Pointer.Y));
-            float dx = (pointerX - 0.5F) * 3.5F * (float)live;
-            float dy = (pointerY - 0.5F) * 2.8F * (float)live;
-            using (var eyes = new Pen(ink, 2.7F))
-            using (var pupils = new SolidBrush(ink))
-            using (var cheek = new SolidBrush(Color.FromArgb(110, 219, 150, 112)))
-            {
-                eyes.StartCap = eyes.EndCap = LineCap.Round;
-                if (resting && !celebrate)
-                {
-                    graphics.DrawArc(eyes, 79, 82, 12, 8, 8, 164);
-                    graphics.DrawArc(eyes, 122, 82, 12, 8, 8, 164);
-                }
-                else if (celebrate)
-                {
-                    graphics.DrawArc(eyes, 79, 84, 12, 9, 187, 166);
-                    graphics.DrawArc(eyes, 122, 84, 12, 9, 187, 166);
-                }
-                else
-                {
-                    graphics.FillEllipse(pupils, 82 + dx, 83 + dy, 5, 8);
-                    graphics.FillEllipse(pupils, 124 + dx, 83 + dy, 5, 8);
-                }
-                graphics.FillEllipse(cheek, 67, 95, 14, 6);
-                graphics.FillEllipse(cheek, 134, 95, 14, 6);
-                graphics.DrawArc(eyes, 101, 92, 12, 10, 17, 145);
+                var scarfTail = new[] { new PointF(131, 113), new PointF(147, 126), new PointF(138, 131), new PointF(124, 116) };
+                graphics.FillPolygon(hoodie, scarfTail);
+                graphics.DrawPolygon(edge, scarfTail);
             }
             if (celebrate || frame.Mode == DeskMode.Relax)
             {
-                using (var sparkle = new Pen(Color.FromArgb(190, 160, 84), 1.8F))
+                using (var sparkle = new SolidBrush(Color.FromArgb(239, 206, 119)))
                 {
                     int amount = celebrate ? 5 : 1;
                     for (int i = 0; i < amount; i++)
                     {
-                        float sx = i % 2 == 0 ? 39 - i * 2 : 174 + i * 2;
-                        float sy = 40 + (i / 2) * 25 + (float)Math.Sin(seconds * 1.7 + i) * 2 * (float)live;
-                        graphics.DrawLine(sparkle, sx - 4, sy, sx + 4, sy);
-                        graphics.DrawLine(sparkle, sx, sy - 4, sx, sy + 4);
+                        float sx = i % 2 == 0 ? 38 - i * 2 : 178 + i * 2;
+                        float sy = 40 + (i / 2) * 23 + (float)Math.Sin(seconds * 1.7 + i) * 2 * (float)live;
+                        graphics.FillPolygon(sparkle, new[] {
+                            new PointF(sx, sy - 6), new PointF(sx + 2, sy - 2), new PointF(sx + 6, sy),
+                            new PointF(sx + 2, sy + 2), new PointF(sx, sy + 6), new PointF(sx - 2, sy + 2),
+                            new PointF(sx - 6, sy), new PointF(sx - 2, sy - 2) });
                     }
                 }
             }
         }
         finally { graphics.Restore(state); }
+    }
+
+    static void PaintSunnyEye(Graphics graphics, float x, float y, float height,
+        float dx, float dy, Color ink, bool rightEye)
+    {
+        using (var eye = new GraphicsPath())
+        using (var white = new SolidBrush(Color.FromArgb(255, 253, 240)))
+        using (var iris = new SolidBrush(Color.FromArgb(50, 109, 92)))
+        using (var irisLight = new SolidBrush(Color.FromArgb(132, 205, 163)))
+        using (var pupil = new SolidBrush(Color.FromArgb(36, 67, 61)))
+        using (var highlight = new SolidBrush(Color.White))
+        using (var edge = new Pen(ink, 2F))
+        using (var lid = new Pen(ink, 2.7F))
+        {
+            eye.AddEllipse(x, y, 19, height);
+            var clip = graphics.Save();
+            try
+            {
+                graphics.SetClip(eye, CombineMode.Intersect);
+                graphics.FillPath(white, eye);
+                float ix = x + 3 + dx, iy = y + 2 + dy;
+                graphics.FillEllipse(iris, ix, iy, 13, height - 3);
+                graphics.FillEllipse(irisLight, ix + 1, iy + height * 0.56F, 11, height * 0.36F);
+                graphics.FillEllipse(pupil, ix + 4.2F, iy + 2, 4.8F, height - 8);
+                graphics.FillEllipse(highlight, ix + 1.3F, iy + 2.1F, 5, 6);
+                graphics.FillEllipse(highlight, ix + 8.8F, iy + height - 7, 2.8F, 2.8F);
+            }
+            finally { graphics.Restore(clip); }
+            graphics.DrawPath(edge, eye);
+            lid.StartCap = lid.EndCap = LineCap.Round;
+            graphics.DrawArc(lid, x - 0.5F, y - 0.5F, 20, height + 1, 190, 160);
+            if (rightEye) graphics.DrawLine(lid, x + 16, y + 3, x + 21, y + 1);
+            else graphics.DrawLine(lid, x + 3, y + 3, x - 2, y + 1);
+        }
     }
 }

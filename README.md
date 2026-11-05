@@ -1,6 +1,6 @@
 # Claude Desktop Background — Living Desk
 
-A small native Windows companion for Claude Desktop: animated scenes behind the window, a little desk companion named **Nếp**, and focus sessions that grow a plant over time. Photos and slideshows are still available.
+A small native Windows companion for Claude Desktop: cozy anime-inspired scenes behind the window, an original chibi companion named **Sunny**, and focus sessions that grow a plant over time. Photos and slideshows are still available.
 
 > Unofficial. Not affiliated with or endorsed by Anthropic. The app draws its own background window and changes Claude's window opacity through standard Windows APIs. It does not modify Claude or read conversations.
 
@@ -21,23 +21,23 @@ All three scenes are drawn with native GDI+. They work offline, without download
 
 | Mode | Behavior |
 | --- | --- |
-| **Focus** | Gentler scene motion and a quieter companion. Start a focus session in Studio or from Nếp's dock. |
+| **Focus** | Gentler scene motion and a quieter companion. Start a focus session in Studio or from Sunny's dock. |
 | **Relax** | More expressive motion and a livelier companion. |
 | **Present** | Makes Claude opaque and hides the scene and companion. The Studio preview remains still. |
 
 Focus sessions default to 25 minutes, with a duration from 5 to 120 minutes. You can pause, resume, reset, or finish a session early. Automatic completion and **Finish** each award one completed session; **Reset** cancels without adding progress. The timer uses an elapsed-time clock, and paused time does not count. Changing the configured duration affects the next session.
 
-Completed sessions are saved in `settings.ini`; the Rainy Study plant and Nếp's celebration reflect that progress. An unfinished running session is not restored after the program exits.
+Completed sessions are saved in `settings.ini`; the Rainy Study plant and Sunny's celebration reflect that progress. An unfinished running session is not restored after the program exits.
 
-### Nếp and Scene Studio
+### Sunny and Scene Studio
 
-Nếp is drawn by the app and lives in a separate interactive window beside Claude. It looks toward the pointer, responds to a greeting and celebrates completed sessions. Where a full dock does not fit, it becomes a compact companion that opens Studio when clicked. Its position is kept within the monitor's working area.
+Sunny is an original anime-style chibi sprout spirit, with expressive eyes, soft cream and mint colors, and a little leaf clip. It is drawn by the app and lives in a separate interactive window beside Claude. It looks toward the pointer, responds to a greeting and celebrates completed sessions. Where a full dock does not fit, it becomes a compact companion that opens Studio when clicked. Its position is kept within the monitor's working area.
 
 Studio provides a live scene preview, mode and motion controls, a switch for animation and the companion, focus duration and timer controls, and quick opacity/dim adjustments. Changes apply immediately and are saved. The existing tray menu remains available for photo-specific controls and system preferences.
 
 Animations stop when they are not needed. Hidden, minimized or unavailable Claude windows do not keep their scene rendering active; an open Studio can still animate its own preview. A running focus session can continue while Claude is hidden. Windows animation preferences and the app's animation switch are respected.
 
-**Upgrading from the photo-only app:** an existing settings file without Living Desk preferences keeps **Image** mode and leaves Nếp disabled. Choose a new scene in Studio whenever you want to switch. New installations start with Rainy Study and Nếp enabled.
+**Upgrading from the photo-only app:** an existing settings file without Living Desk preferences keeps **Image** mode and leaves Sunny disabled. Choose a new scene in Studio whenever you want to switch. New installations start with Rainy Study and Sunny enabled.
 
 ## Existing background features
 
@@ -106,13 +106,13 @@ Preferences and progress are saved in `settings.ini` next to the executable. If 
 | `ClaudeBg.cs` | Windows integration, attachment lifecycle, settings, image loading and tray menu. |
 | `Scenes.cs` | The three procedural scenes and their shared frame data. |
 | `DeskRuntime.cs` | Frame scheduling, focus session state and coordination with Claude windows. |
-| `DeskUi.cs` | Scene Studio, live preview, Nếp and companion placement. |
+| `DeskUi.cs` | Scene Studio, live preview, Sunny and companion placement. |
 
 ## Window transparency limitation
 
 Windows applies opacity to the whole Claude window, including its text. For clearer reading, increase **Opacity while using Claude**, lower motion or dim the background; use **Present** or `Ctrl+Alt+B` when you want full opacity. Scene Studio previews show the scene itself, not a simulation of Claude's actual text rendering.
 
-The scene under Claude is decorative; Nếp and Studio provide their own interactive surfaces. Color-key transparency was tested in the original app and does not work with Claude's GPU-rendered window. Interactive desktop behavior such as real monitor transitions, Claude updates and screen-sharing tools should also be checked on your Windows machine.
+The scene under Claude is decorative; Sunny and Studio provide their own interactive surfaces. Color-key transparency was tested in the original app and does not work with Claude's GPU-rendered window. Interactive desktop behavior such as real monitor transitions, Claude updates and screen-sharing tools should also be checked on your Windows machine.
 
 ## License
 
