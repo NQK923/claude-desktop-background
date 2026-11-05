@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -247,6 +248,32 @@ static partial class Tests
         return (Form)Activator.CreateInstance(app.GetNestedType(name, Any), true);
     }
 
+    static void PrepareSnapshot(Form form)
+    {
+        // Hidden Forms do not create visible native child controls. Show off-screen and pump their
+        // layout/paint messages before WM_PRINT, otherwise a blank background can pass a smoke test.
+        form.StartPosition = FormStartPosition.Manual;
+        form.Location = new Point(-10000, -10000);
+        form.ShowInTaskbar = false;
+        form.Show();
+        Application.DoEvents();
+        form.PerformLayout();
+        Application.DoEvents();
+    }
+
+    static bool HasSnapshotContent(Bitmap bitmap)
+    {
+        var colors = new HashSet<int>();
+        // Ignore the window frame/title bar; those can be present while every child is still hidden.
+        for (int y = 45; y < bitmap.Height - 8; y += 5)
+            for (int x = 8; x < bitmap.Width - 8; x += 5)
+            {
+                colors.Add(bitmap.GetPixel(x, y).ToArgb());
+                if (colors.Count > 20) return true;
+            }
+        return false;
+    }
+
     static void StudioRendering(string output)
     {
         string folder = Path.Combine(dir, "studio-settings");
@@ -262,39 +289,46 @@ static partial class Tests
         using (var studioForm = CreateDeskForm("StudioForm"))
         {
             studioForm.Size = new Size(960, 680);
-            studioForm.CreateControl();
-            studioForm.PerformLayout();
+            PrepareSnapshot(studioForm);
             using (var bitmap = new Bitmap(studioForm.Width, studioForm.Height))
             {
                 studioForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(output, "SceneStudio.png"), ImageFormat.Png);
+                Check("Scene Studio snapshot contains its rendered controls", HasSnapshotContent(bitmap));
             }
+            var livePreview = studioForm.Controls.Find("ScenePreview", true).Single();
+            Check("Scene Studio creates a visible live preview", livePreview.Visible && livePreview.IsHandleCreated && livePreview.Width > 100 && livePreview.Height > 40);
             Check("Scene Studio creates a resizable native UI", studioForm.Controls.Count > 0 && studioForm.MinimumSize.Width >= 700);
             studioForm.Size = studioForm.MinimumSize;
             studioForm.PerformLayout();
+            Application.DoEvents();
             using (var bitmap = new Bitmap(studioForm.Width, studioForm.Height))
             {
                 studioForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(output, "SceneStudio-small.png"), ImageFormat.Png);
+                Check("small Studio snapshot contains its rendered controls", HasSnapshotContent(bitmap));
             }
             Check("Scene Studio paints at its minimum size", true);
         }
         using (var companionForm = CreateDeskForm("CompanionForm"))
         {
-            companionForm.CreateControl();
+            PrepareSnapshot(companionForm);
             using (var bitmap = new Bitmap(companionForm.Width, companionForm.Height))
             {
                 companionForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(output, "Nep.png"), ImageFormat.Png);
+                Check("companion snapshot contains the character and controls", HasSnapshotContent(bitmap));
             }
             Check("companion draws without Claude or a running timer", companionForm.Width > 0 && companionForm.Height > 0);
             companionForm.ClientSize = new Size(94, 110);
             companionForm.GetType().GetMethod("SetCompactLayout", Any).Invoke(companionForm, new object[] { true });
             companionForm.PerformLayout();
+            Application.DoEvents();
             using (var bitmap = new Bitmap(companionForm.Width, companionForm.Height))
             {
                 companionForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(output, "Nep-compact.png"), ImageFormat.Png);
+                Check("compact snapshot contains the character", HasSnapshotContent(bitmap));
             }
             Check("compact companion paints inside its dock", companionForm.Width == 94 && companionForm.Height == 110);
         }
