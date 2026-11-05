@@ -14,7 +14,7 @@ using System.Windows.Forms;
 
 // Tests the parts of ClaudeBg.exe that need no Claude window: image loading, settings, the slideshow
 // deck, theme sampling and process checks. Run with tests\run-tests.ps1; exits with the failure count.
-static class Tests
+static partial class Tests
 {
     const BindingFlags Any = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
     static Type app;
@@ -47,6 +47,7 @@ static class Tests
             Fading();
             AsyncLoading();
             Processes();
+            LivingDesk(args.Length > 1 ? args[1] : Path.Combine(dir, "previews"));
         }
         catch (Exception ex) { Check("no exception: " + ex, false); }
         finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
