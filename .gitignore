@@ -1,5 +1,6 @@
 # Built output
 *.exe
+tests/output/
 
 # Personal settings, log and background images
 settings.ini

@@ -18,15 +18,16 @@ using Timer = System.Windows.Forms.Timer;
 
 [assembly: AssemblyTitle("Claude background")]
 [assembly: AssemblyProduct("Claude background")]
-[assembly: AssemblyDescription("Shows an image behind the Claude desktop window. Unofficial.")]
+[assembly: AssemblyDescription("Living scenes, a focus companion and photos for the Claude desktop window. Unofficial.")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 NQK923, MIT License")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
-[assembly: AssemblyInformationalVersion("1.4.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyInformationalVersion("1.5.0")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Tests")]
 
-// Shows an image behind each Claude desktop window and makes those windows semi-transparent.
+// Shows a living scene or image behind each Claude desktop window and makes it semi-transparent.
 // Build with build.ps1 (ClaudeBg.exe), or run claude-bg.ps1. Settings live in settings.ini next to it.
-public static class ClaudeBg
+public static partial class ClaudeBg
 {
     const string RepoUrl = "https://github.com/NQK923/claude-desktop-background";
 
@@ -71,6 +72,7 @@ public static class ClaudeBg
     [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr p, out long created, out long exited, out long kernel, out long user);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr p, uint flags, StringBuilder name, ref int size);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")] static extern int DwmGetWindowAttributeInt(IntPtr h, int attr, out int value, int size);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
 
     // Windows' own interface for virtual desktops (Win+Tab); a process may move only its own windows.
@@ -90,6 +92,7 @@ public static class ClaudeBg
     const uint GW_HWNDNEXT = 2, GW_OWNER = 4, GA_ROOTOWNER = 3;
     const uint SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40, SWP_NOOWNERZORDER = 0x200;
     const int DWMWA_EXTENDED_FRAME_BOUNDS = 9, DWMWA_TRANSITIONS_FORCEDISABLED = 3, DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34;
+    const int DWMWA_CLOAKED = 14;
     const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
     const int DWMWCP_DONOTROUND = 1, DWMWCP_ROUND = 2;
     const uint SPI_GETANIMATION = 0x48, SPI_GETCLIENTAREAANIMATION = 0x1042;
@@ -109,7 +112,7 @@ public static class ClaudeBg
     // started with no command, it posts CmdAlready so the running one says where it is.
     const string HostTitle = "ClaudeBg host";
     const int WM_APP_COMMAND = 0x8000 + 1;
-    const int CmdToggle = 1, CmdNext = 2, CmdExit = 3, CmdAlready = 4;
+    const int CmdToggle = 1, CmdNext = 2, CmdExit = 3, CmdAlready = 4, CmdStudio = 5;
 
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string RunValue = "ClaudeBg";
@@ -131,18 +134,62 @@ public static class ClaudeBg
         public string SlideFolder = "";
         public int SlideMinutes;               // 0 = slideshow off
         public bool HideInCapture;             // keep the image out of screenshots and screen sharing
+        public SceneKind Scene = SceneKind.RainyStudy;
+        public DeskMode Mode = DeskMode.Focus;
+        public double Motion = 0.45;
+        public bool SceneAnimations = true;
+        public bool CompanionVisible = true;
+        public int FocusMinutes = 25;
+        public int CompletedSessions;
+
+        static double Limit(double value, double fallback, double min, double max)
+        {
+            return double.IsNaN(value) || double.IsInfinity(value) ? fallback : Math.Max(min, Math.Min(max, value));
+        }
+
+        static bool Boolean(string value, bool fallback)
+        {
+            if (value == "1") return true;
+            if (value == "0") return false;
+            bool parsed;
+            return bool.TryParse(value, out parsed) ? parsed : fallback;
+        }
+
+        public void Normalize()
+        {
+            Focused = Limit(Focused, 0.88, 0.3, 1);
+            Unfocused = Limit(Unfocused, 0.75, 0.3, 1);
+            DimDark = Limit(DimDark, 0.35, 0, 1);
+            DimLight = Limit(DimLight, 0.35, 0, 1);
+            AlignX = Limit(AlignX, 0.5, 0, 1);
+            AlignY = Limit(AlignY, 0.5, 0, 1);
+            Blur = Math.Max(0, Math.Min(BlurFactors.Length - 1, Blur));
+            SlideMinutes = Math.Max(0, Math.Min(int.MaxValue / 60000, SlideMinutes));
+            Motion = Limit(Motion, 0.45, 0, 1);
+            FocusMinutes = Math.Max(5, Math.Min(120, FocusMinutes));
+            CompletedSessions = Math.Max(0, CompletedSessions);
+            if (!Enum.IsDefined(typeof(SceneKind), Scene)) Scene = SceneKind.Image;
+            if (!Enum.IsDefined(typeof(DeskMode), Mode)) Mode = DeskMode.Focus;
+        }
 
         public static Settings Load(string dir)
         {
             var s = new Settings { File = Path.Combine(dir, "settings.ini"), Image = Path.Combine(dir, "bg.jpg") };
             if (!System.IO.File.Exists(s.File)) return s;
-            foreach (var line in System.IO.File.ReadAllLines(s.File))
+            // An upgrade keeps the user's photo and does not add a companion until they choose one.
+            s.Scene = SceneKind.Image;
+            s.CompanionVisible = false;
+            string[] lines;
+            try { lines = System.IO.File.ReadAllLines(s.File); }
+            catch (Exception ex) { Log("Could not read " + s.File + ": " + ex.Message); return s; }
+            foreach (var line in lines)
             {
                 int eq = line.IndexOf('=');
                 if (eq < 0) continue;
                 string k = line.Substring(0, eq).Trim(), v = line.Substring(eq + 1).Trim();
                 double d;
-                bool num = double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d);
+                bool num = double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)
+                    && !double.IsNaN(d) && !double.IsInfinity(d);
                 try
                 {
                     switch (k)
@@ -155,22 +202,37 @@ public static class ClaudeBg
                         case "unfocused": if (num) s.Unfocused = d; break;
                         case "dimDark": if (num) s.DimDark = d; break;
                         case "dimLight": if (num) s.DimLight = d; break;
-                        case "blur": if (num) s.Blur = Math.Max(0, Math.Min(BlurFactors.Length - 1, (int)d)); break;
+                        case "blur": if (num) s.Blur = (int)Math.Max(0, Math.Min(BlurFactors.Length - 1, d)); break;
                         case "tint": s.Tint = ColorTranslator.FromHtml(v); break;
                         case "alignX": if (num) s.AlignX = Math.Max(0, Math.Min(1, d)); break;
                         case "alignY": if (num) s.AlignY = Math.Max(0, Math.Min(1, d)); break;
                         case "slideFolder": s.SlideFolder = v.Length > 0 ? Path.Combine(dir, v) : ""; break;
-                        case "slideMinutes": if (num) s.SlideMinutes = Math.Max(0, (int)d); break;
-                        case "hideInCapture": s.HideInCapture = v == "1" || v.ToLowerInvariant() == "true"; break;
+                        case "slideMinutes": if (num) s.SlideMinutes = (int)Math.Max(0, Math.Min(int.MaxValue / 60000, d)); break;
+                        case "hideInCapture": s.HideInCapture = Boolean(v, s.HideInCapture); break;
+                        case "scene":
+                            SceneKind scene;
+                            if (Enum.TryParse<SceneKind>(v, true, out scene) && Enum.IsDefined(typeof(SceneKind), scene)) s.Scene = scene;
+                            break;
+                        case "mode":
+                            DeskMode mode;
+                            if (Enum.TryParse<DeskMode>(v, true, out mode) && Enum.IsDefined(typeof(DeskMode), mode)) s.Mode = mode;
+                            break;
+                        case "motion": if (num) s.Motion = d; break;
+                        case "sceneAnimations": s.SceneAnimations = Boolean(v, s.SceneAnimations); break;
+                        case "companionVisible": s.CompanionVisible = Boolean(v, s.CompanionVisible); break;
+                        case "focusMinutes": if (num) s.FocusMinutes = (int)Math.Max(5, Math.Min(120, d)); break;
+                        case "completedSessions": if (num) s.CompletedSessions = (int)Math.Max(0, Math.Min(int.MaxValue, d)); break;
                     }
                 }
                 catch (Exception) { }
             }
+            s.Normalize();
             return s;
         }
 
         public void Save()
         {
+            Normalize();
             Func<double, string> f = x => x.ToString(CultureInfo.InvariantCulture);
             // Written beside it first and then swapped in, so a crash or full disk never leaves half a file.
             string tmp = File + ".tmp";
@@ -184,11 +246,20 @@ public static class ClaudeBg
                     "tint=" + ColorTranslator.ToHtml(Tint),
                     "alignX=" + f(AlignX), "alignY=" + f(AlignY),
                     "slideFolder=" + SlideFolder, "slideMinutes=" + SlideMinutes,
-                    "hideInCapture=" + (HideInCapture ? "1" : "0") });
+                    "hideInCapture=" + (HideInCapture ? "1" : "0"),
+                    "scene=" + Scene, "mode=" + Mode, "motion=" + f(Motion),
+                    "sceneAnimations=" + (SceneAnimations ? "1" : "0"),
+                    "companionVisible=" + (CompanionVisible ? "1" : "0"),
+                    "focusMinutes=" + FocusMinutes, "completedSessions=" + CompletedSessions });
                 if (System.IO.File.Exists(File)) System.IO.File.Replace(tmp, File, null);
                 else System.IO.File.Move(tmp, File);
             }
             catch (Exception ex) { Log("Could not save " + File + ": " + ex.Message); }
+            finally
+            {
+                try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); }
+                catch (Exception) { }
+            }
         }
     }
 
@@ -258,7 +329,22 @@ public static class ClaudeBg
         protected override void OnPaint(PaintEventArgs e)
         {
             var canvas = Canvas.IsEmpty ? ClientSize : Canvas;
-            if (bgImage == null || canvas.Width <= 0 || canvas.Height <= 0) return;
+            if (canvas.Width <= 0 || canvas.Height <= 0) return;
+            if (cfg != null && cfg.Scene != SceneKind.Image)
+            {
+                var pointer = PointToClient(Cursor.Position);
+                var frame = CurrentSceneFrame(new PointF((pointer.X + Offset.X) / (float)canvas.Width,
+                    (pointer.Y + Offset.Y) / (float)canvas.Height));
+                var state = e.Graphics.Save();
+                try
+                {
+                    e.Graphics.TranslateTransform(-Offset.X, -Offset.Y);
+                    ScenePainter.Paint(e.Graphics, new Rectangle(Point.Empty, canvas), frame);
+                }
+                finally { e.Graphics.Restore(state); }
+                return;
+            }
+            if (bgImage == null) { e.Graphics.Clear(Color.Black); return; }
             if (cache == null || cache.Size != canvas)
             {
                 bool fast = cache != null; // the size changed: draw quickly now, properly when it settles
@@ -324,9 +410,10 @@ public static class ClaudeBg
                 if (c == CmdToggle) Toggle();
                 else if (c == CmdNext) NextSlide();
                 else if (c == CmdExit) Application.Exit();
+                else if (c == CmdStudio) ShowStudio();
                 else if (c == CmdAlready)
                     tray.ShowBalloonTip(5000, "Claude background is already running",
-                        "Right-click this icon for settings.", ToolTipIcon.Info);
+                        "Right-click this icon and choose Scene Studio.", ToolTipIcon.Info);
             }
             base.WndProc(ref m);
         }
@@ -352,6 +439,7 @@ public static class ClaudeBg
         public Rectangle Placed = Rectangle.Empty; // where its background window is
         public int Corners = -1;       // corner preference given to the background window
         public Guid Desktop = Guid.Empty;
+        public bool Eligible;         // visible, not minimized/cloaked, and on the current virtual desktop
         public BgForm Form;
     }
 
@@ -481,7 +569,7 @@ public static class ClaudeBg
     static void CheckTheme(bool force)
     {
         if (!force && unchecked(Environment.TickCount - lastThemeCheck) < 15000) return;
-        var a = attached.Values.FirstOrDefault(x => IsWindowVisible(x.Target) && !IsIconic(x.Target));
+        var a = attached.Values.FirstOrDefault(x => VisibleClaudeTarget(x.Target));
         if (a == null || !enabled) return;
         lastThemeCheck = Environment.TickCount;
         bool? dark;
@@ -491,6 +579,7 @@ public static class ClaudeBg
         {
             claudeDark = dark.Value;
             ApplyLook();
+            NotifyDeskChanged();
         }
     }
 
@@ -545,6 +634,7 @@ public static class ClaudeBg
         Sync(a);
         CheckTheme(true);
         UpdateTrayText();
+        SyncDeskWindows();
     }
 
     static void Detach(Attachment a)
@@ -563,6 +653,7 @@ public static class ClaudeBg
             pidHooks.Remove(a.Pid);
         }
         UpdateTrayText();
+        SyncDeskWindows();
     }
 
     static void UpdateTrayText()
@@ -582,6 +673,7 @@ public static class ClaudeBg
     // of reaching Application.ThreadException: log it and carry on.
     static void OnWinEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
     {
+        if (deskClosing) return;
         try { HandleWinEvent(ev, hwnd, idObject); }
         catch (Exception ex) { Log(ex.ToString()); }
     }
@@ -606,6 +698,7 @@ public static class ClaudeBg
         if (ev == EVENT_SYSTEM_MOVESIZESTART) a.Moving = true;
         else if (ev == EVENT_SYSTEM_MOVESIZEEND) a.Moving = false;
         Sync(a);
+        SyncDeskWindows();
     }
 
     static byte ToAlpha(double opacity) { return (byte)Math.Round(Math.Max(0.3, Math.Min(1.0, opacity)) * 255); }
@@ -644,6 +737,7 @@ public static class ClaudeBg
         }
         if (a.Alpha == goal) return;
         if (!fade || !Animations()) WriteAlpha(a, goal);
+        else if (fadeTimer == null) WriteAlpha(a, goal);
         else if (!fadeTimer.Enabled) fadeTimer.Start();
     }
 
@@ -734,6 +828,7 @@ public static class ClaudeBg
     static void SyncAll()
     {
         foreach (var a in attached.Values.ToList()) Sync(a);
+        SyncDeskWindows();
     }
 
     // The rule throughout: Claude shows the desktop through itself as little as Windows allows. The image
@@ -742,7 +837,8 @@ public static class ClaudeBg
     {
         if (!IsWindow(a.Target)) { Detach(a); return; }
         bool minimized = IsIconic(a.Target);
-        if (!IsWindowVisible(a.Target) || minimized)
+        a.Eligible = VisibleClaudeTarget(a.Target);
+        if (!a.Eligible)
         {
             // Hidden or minimized: opaque now, so its restore animation runs opaque too.
             a.Shown = false;
@@ -753,8 +849,21 @@ public static class ClaudeBg
         }
 
         RECT r;
-        if (DwmGetWindowAttribute(a.Target, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) != 0) return;
+        if (DwmGetWindowAttribute(a.Target, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) != 0)
+        {
+            a.Eligible = false;
+            SetAlpha(a, 255, false);
+            HideBg(a);
+            return;
+        }
         var rect = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+        if (rect.Width <= 0 || rect.Height <= 0)
+        {
+            a.Eligible = false;
+            SetAlpha(a, 255, false);
+            HideBg(a);
+            return;
+        }
         var fh = a.Form.Handle;
         int now = Environment.TickCount;
         bool holding = unchecked(a.HoldUntil - now) > 0;
@@ -780,14 +889,14 @@ public static class ClaudeBg
             holding = true;
         }
         // A plain move does not animate: the image simply follows below.
-        if (holding && !holdTimer.Enabled) holdTimer.Start();
+        if (holding && holdTimer != null && !holdTimer.Enabled) holdTimer.Start();
         if (!holding) a.Landing = false;
         a.Last = rect;
 
-        if (!enabled || bgImage == null || a.Moving || a.Landing)
+        if (!enabled || !HasBackground() || cfg.Mode == DeskMode.Present || a.Moving || a.Landing)
         {
-            // Off (or no image yet) fades out; a drag (like Windows' own acrylic) or a landing turns opaque at once.
-            SetAlpha(a, 255, !a.Moving && !a.Landing);
+            // Present restores an opaque window immediately; drags and landings also remain opaque.
+            SetAlpha(a, 255, cfg.Mode != DeskMode.Present && !a.Moving && !a.Landing);
             if (a.Alpha == 255) { HideBg(a); a.Placed = Rectangle.Empty; }
             return;
         }
@@ -812,7 +921,7 @@ public static class ClaudeBg
     static void Toggle()
     {
         enabled = !enabled;
-        enabledItem.Checked = enabled;
+        if (enabledItem != null) enabledItem.Checked = enabled;
         UpdateTrayText();
         SyncAll();
     }
@@ -828,12 +937,14 @@ public static class ClaudeBg
 
     static void ApplyLook()
     {
+        if (cfg == null) return;
         lookDim = (float)(claudeDark ? cfg.DimDark : cfg.DimLight);
         lookBlur = BlurFactors[cfg.Blur];
         lookTint = cfg.Tint;
         lookAlignX = (float)cfg.AlignX;
         lookAlignY = (float)cfg.AlignY;
         foreach (var a in attached.Values) a.Form.DropCache();
+        InvalidateDeskUi();
     }
 
     // The largest screen: no window needs more image than that, so bigger photos are shrunk on load.
@@ -965,7 +1076,7 @@ public static class ClaudeBg
             {
                 ui.Post(_ =>
                 {
-                    if (seq != loadSeq) { if (img != null) img.Dispose(); return; } // a newer choice won
+                    if (deskClosing || seq != loadSeq) { if (img != null) img.Dispose(); return; } // a newer choice won
                     if (img != null) ShowImage(img, path); else LoadFailed(path, error, false);
                     if (done != null) done(img != null);
                 }, null);
@@ -994,16 +1105,20 @@ public static class ClaudeBg
         bgImage = img;
         foreach (var a in attached.Values) a.Form.DropCache();
         if (old != null) old.Dispose();
-        var oldIcon = tray.Icon;
-        tray.Icon = MakeIcon(img);
-        if (oldIcon != null) oldIcon.Dispose();
+        if (tray != null)
+        {
+            var oldIcon = tray.Icon;
+            tray.Icon = MakeIcon(img);
+            if (oldIcon != null) oldIcon.Dispose();
+        }
         currentImage = path;
         SyncAll(); // the first image brings the backgrounds in
+        InvalidateDeskUi();
     }
 
     static string[] SlideFiles()
     {
-        if (string.IsNullOrEmpty(cfg.SlideFolder) || !Directory.Exists(cfg.SlideFolder)) return new string[0];
+        if (cfg == null || string.IsNullOrEmpty(cfg.SlideFolder) || !Directory.Exists(cfg.SlideFolder)) return new string[0];
         try
         {
             return Directory.GetFiles(cfg.SlideFolder)
@@ -1037,20 +1152,26 @@ public static class ClaudeBg
         return next;
     }
 
-    static void NextSlide() { NextSlide(5); }
+    static void NextSlide()
+    {
+        if (cfg == null || cfg.Scene != SceneKind.Image || deskClosing) return;
+        NextSlide(5);
+    }
 
     static void NextSlide(int tries)
     {
+        if (cfg == null || cfg.Scene != SceneKind.Image || deskClosing) return;
         var next = tries > 0 ? TakeSlide() : null;
         if (next != null) SetImageAsync(next, ok => { if (!ok) NextSlide(tries - 1); });
     }
 
     static void ConfigureSlideshow()
     {
+        if (slideTimer == null) return;
         slideTimer.Stop();
-        if (cfg.SlideMinutes > 0 && SlideFiles().Length > 0)
+        if (cfg != null && cfg.Scene == SceneKind.Image && cfg.SlideMinutes > 0 && SlideFiles().Length > 0)
         {
-            slideTimer.Interval = cfg.SlideMinutes * 60000;
+            slideTimer.Interval = (int)Math.Min(int.MaxValue, (long)cfg.SlideMinutes * 60000);
             slideTimer.Start();
         }
     }
@@ -1124,6 +1245,18 @@ public static class ClaudeBg
         enabledItem = new ToolStripMenuItem("Enabled") { Checked = true, ShortcutKeyDisplayString = "Ctrl+Alt+B" };
         enabledItem.Click += (s, e) => Toggle();
         menu.Items.Add(enabledItem);
+        menu.Items.Add("Scene Studio...", null, (s, e) => ShowStudio());
+        var scenes = new[] { SceneKind.RainyStudy, SceneKind.Aquarium, SceneKind.NightTrain, SceneKind.Image };
+        menu.Items.Add(ChoiceMenu("Scene", new[] { "Rainy Study", "Aquarium", "Night Train", "My image" },
+            i => cfg.Scene == scenes[i], i => { cfg.Scene = scenes[i]; ChangeDeskPreferences(); }));
+        menu.Items.Add(ChoiceMenu("Mode", new[] { "Focus", "Relax", "Present (opaque Claude)" },
+            i => cfg.Mode == (DeskMode)i, i => { cfg.Mode = (DeskMode)i; ChangeDeskPreferences(); }));
+        var companionItem = new ToolStripMenuItem("Show Sunny companion");
+        companionItem.Click += (s, e) => { cfg.CompanionVisible = !cfg.CompanionVisible; ChangeDeskPreferences(); };
+        menu.Items.Add(companionItem);
+        var focusItem = new ToolStripMenuItem("Start focus session");
+        focusItem.Click += (s, e) => ToggleFocusSession();
+        menu.Items.Add(focusItem);
         menu.Items.Add(new ToolStripSeparator());
 
         menu.Items.Add("Change image...", null, (s, e) =>
@@ -1141,8 +1274,8 @@ public static class ClaudeBg
                 }
                 catch (Exception) { cfg.Image = dlg.FileName; } // e.g. the folder is read-only
                 cfg.SlideMinutes = 0;
-                cfg.Save();
-                ConfigureSlideshow();
+                cfg.Scene = SceneKind.Image;
+                ChangeDeskPreferences();
             }
         });
         menu.Items.Add("Reload image", null, (s, e) => { if (currentImage != null) TrySetImage(currentImage, true); });
@@ -1162,7 +1295,13 @@ public static class ClaudeBg
                         if (cfg.SlideMinutes == 0) cfg.SlideMinutes = 15;
                     }
                     if (SlideFiles().Length == 0) MessageBox.Show("That folder has no images.", "Claude background");
-                    else NextSlide();
+                    else
+                    {
+                        cfg.Scene = SceneKind.Image;
+                        ChangeDeskPreferences();
+                        NextSlide();
+                        return;
+                    }
                 }
                 else if (i == 1) NextSlide();
                 else
@@ -1170,9 +1309,9 @@ public static class ClaudeBg
                     cfg.SlideMinutes = slideMinutes[i];
                     if (cfg.SlideMinutes > 0 && SlideFiles().Length == 0)
                         MessageBox.Show("Choose a folder of images first.", "Claude background");
+                    else if (cfg.SlideMinutes > 0) cfg.Scene = SceneKind.Image;
                 }
-                cfg.Save();
-                ConfigureSlideshow();
+                ChangeDeskPreferences();
             }));
 
         menu.Items.Add(ChoiceMenu("Image position", new[] { "Left", "Center", "Right", "-", "Top", "Middle", "Bottom" },
@@ -1187,13 +1326,13 @@ public static class ClaudeBg
 
         var opacities = new[] { 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0 };
         menu.Items.Add(LevelMenu("Opacity while using Claude", opacities, () => cfg.Focused,
-            v => { cfg.Focused = v; cfg.Save(); SyncAll(); }));
+            v => { cfg.Focused = v; ChangeDeskPreferences(); }));
         menu.Items.Add(LevelMenu("Opacity while in another app", opacities, () => cfg.Unfocused,
-            v => { cfg.Unfocused = v; cfg.Save(); SyncAll(); }));
+            v => { cfg.Unfocused = v; ChangeDeskPreferences(); }));
 
         var dimMenu = LevelMenu("Image dim", new[] { 0.0, 0.2, 0.35, 0.5, 0.65, 0.8 },
             () => claudeDark ? cfg.DimDark : cfg.DimLight,
-            v => { if (claudeDark) cfg.DimDark = v; else cfg.DimLight = v; cfg.Save(); ApplyLook(); });
+            v => { if (claudeDark) cfg.DimDark = v; else cfg.DimLight = v; ChangeDeskPreferences(); });
         menu.Items.Add(dimMenu);
 
         menu.Items.Add(ChoiceMenu("Blur", new[] { "Off", "Light", "Medium", "Strong" },
@@ -1219,12 +1358,13 @@ public static class ClaudeBg
             }));
         menu.Items.Add(new ToolStripSeparator());
 
-        var captureItem = new ToolStripMenuItem("Hide image in screenshots and screen sharing") { Checked = cfg.HideInCapture };
+        var captureItem = new ToolStripMenuItem("Hide background and companion in screen capture") { Checked = cfg.HideInCapture };
         captureItem.Click += (s, e) =>
         {
             cfg.HideInCapture = captureItem.Checked = !cfg.HideInCapture;
             cfg.Save();
             foreach (var a in attached.Values) ApplyCaptureAffinity(a);
+            NotifyDeskChanged();
         };
         menu.Items.Add(captureItem);
 
@@ -1238,6 +1378,8 @@ public static class ClaudeBg
 
         menu.Opening += (s, e) =>
         {
+            companionItem.Checked = cfg.CompanionVisible;
+            focusItem.Text = FocusRunning() ? "Pause focus session" : FocusHasSession() ? "Resume focus session" : "Start focus session";
             dimMenu.Text = "Image dim (Claude " + (claudeDark ? "dark" : "light") + " theme)";
             startupItem.Enabled = RunningAsExe();
             startupItem.Checked = StartsWithWindows();
@@ -1258,6 +1400,7 @@ public static class ClaudeBg
 
     // ClaudeBg.exe                 runs the background
     // ClaudeBg.exe --toggle|--next  sends that to the running one (for other hotkey tools or a Stream Deck)
+    // ClaudeBg.exe --studio         opens Scene Studio, starting the app if necessary
     // ClaudeBg.exe --restore        exits the running one, or makes Claude opaque if none runs (it was killed)
     [STAThread]
     public static int Main(string[] args)
@@ -1265,14 +1408,16 @@ public static class ClaudeBg
         string arg = args.Length > 0 ? args[0].TrimStart('-', '/').ToLowerInvariant() : "";
         if (arg == "") { Run(AppDomain.CurrentDomain.BaseDirectory); return 0; }
 
-        int cmd = arg == "toggle" ? CmdToggle : arg == "next" ? CmdNext : arg == "restore" || arg == "exit" ? CmdExit : 0;
+        int cmd = arg == "toggle" ? CmdToggle : arg == "next" ? CmdNext : arg == "studio" ? CmdStudio
+            : arg == "restore" || arg == "exit" ? CmdExit : 0;
         if (cmd == 0)
         {
-            MessageBox.Show("Usage: ClaudeBg.exe [--toggle | --next | --restore]", "Claude background");
+            MessageBox.Show("Usage: ClaudeBg.exe [--studio | --toggle | --next | --restore]", "Claude background");
             return 2;
         }
         var running = FindWindow(null, HostTitle);
         if (running != IntPtr.Zero) PostMessage(running, WM_APP_COMMAND, (IntPtr)cmd, IntPtr.Zero);
+        else if (cmd == CmdStudio) { requestStudioOnStart = true; Run(AppDomain.CurrentDomain.BaseDirectory); }
         else if (cmd == CmdExit) RestoreClaude();
         return 0;
     }
@@ -1304,7 +1449,9 @@ public static class ClaudeBg
         {
             // Already running: have that one point at its tray icon instead of doing nothing.
             var running = FindWindow(null, HostTitle);
-            if (running != IntPtr.Zero) PostMessage(running, WM_APP_COMMAND, (IntPtr)CmdAlready, IntPtr.Zero);
+            if (running != IntPtr.Zero) PostMessage(running, WM_APP_COMMAND,
+                (IntPtr)(requestStudioOnStart ? CmdStudio : CmdAlready), IntPtr.Zero);
+            mutex.Dispose();
             return;
         }
 
@@ -1323,12 +1470,16 @@ public static class ClaudeBg
 
         host = new HostWindow();
         ui = new WindowsFormsSynchronizationContext();
-        tray = new NotifyIcon { Text = "Claude background", Visible = true };
+        tray = new NotifyIcon { Text = "Claude background", Icon = MakeDeskIcon(), Visible = true };
         tray.ContextMenuStrip = BuildMenu();
         tray.DoubleClick += (s, e) => Toggle();
         slideTimer = new Timer();
-        // No point decoding a new image while none is on screen; the next tick after Claude returns changes it.
-        slideTimer.Tick += (s, e) => { if (attached.Values.Any(a => IsWindowVisible(a.Form.Handle))) NextSlide(); };
+        // A visible eligible target is enough, including after the first image failed to load.
+        slideTimer.Tick += (s, e) =>
+        {
+            if (enabled && cfg.Scene == SceneKind.Image && cfg.Mode != DeskMode.Present
+                && attached.Values.Any(a => VisibleClaudeTarget(a.Target))) NextSlide();
+        };
         fadeTimer = new Timer { Interval = 15 };
         fadeTimer.Tick += (s, e) => FadeStep();
         holdTimer = new Timer { Interval = 50 };
@@ -1341,14 +1492,14 @@ public static class ClaudeBg
         UpdateTrayText();
 
         // At startup the first slide loads right here, so the fallbacks below know whether one did.
-        if (cfg.SlideMinutes > 0)
+        if (cfg.Scene == SceneKind.Image && cfg.SlideMinutes > 0)
             for (int tries = 0; tries < 5 && currentImage == null; tries++)
             {
                 var slide = TakeSlide();
                 if (slide == null) break;
                 TrySetImage(slide, false);
             }
-        if (currentImage == null)
+        if (cfg.Scene == SceneKind.Image && currentImage == null)
         {
             // The saved image, else a bg.jpg next to the settings or the program. With none at all, Claude
             // stays opaque until one is chosen from the tray menu.
@@ -1357,14 +1508,15 @@ public static class ClaudeBg
         }
         ApplyLook();
         ConfigureSlideshow();
+        StartDeskRuntime();
 
         bool hotkey = RegisterHotKey(host.Handle, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.B);
-        if (currentImage == null)
+        if (!HasBackground())
             tray.ShowBalloonTip(8000, "Claude background needs an image",
-                "Right-click this icon and choose \"Change image...\", or put a bg.jpg next to the program.", ToolTipIcon.Info);
+                "Open Scene Studio to choose a living scene or your own image.", ToolTipIcon.Info);
         else if (firstRun)
-            tray.ShowBalloonTip(8000, "Claude background is running",
-                "It shows your image behind Claude. Right-click this icon for settings" +
+            tray.ShowBalloonTip(8000, "Your Living Desk is ready",
+                "Open Scene Studio to choose a scene and start a focus session" +
                 (hotkey ? "; Ctrl+Alt+B turns it on and off." : "."), ToolTipIcon.Info);
         else if (!hotkey)
             tray.ShowBalloonTip(5000, "Claude background",
@@ -1377,12 +1529,18 @@ public static class ClaudeBg
         globalHooks.Add(SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, IntPtr.Zero, winEventProc, 0, 0, WINEVENT_SKIPOWNPROCESS));
         SystemEvents.UserPreferenceChanged += (s, e) =>
         {
-            if (e.Category == UserPreferenceCategory.General) ui.Post(_ => CheckTheme(true), null);
+            if (e.Category == UserPreferenceCategory.General) ui.Post(_ =>
+            {
+                if (deskClosing) return;
+                UpdateDeskMotionPreference();
+                CheckTheme(true);
+            }, null);
         };
         // A bigger screen plugged in needs more of the image than was kept when it loaded.
         SystemEvents.DisplaySettingsChanged += (s, e) => ui.Post(_ =>
         {
-            if (currentImage != null && bgImage != null)
+            if (deskClosing) return;
+            if (cfg.Scene == SceneKind.Image && currentImage != null && bgImage != null)
             {
                 var screen = LargestScreen();
                 if (bgImage.Width < screen.Width || bgImage.Height < screen.Height) SetImageAsync(currentImage, null);
@@ -1400,6 +1558,7 @@ public static class ClaudeBg
                 if (IsWindow(a.Target) && enabled) Verify(a);
                 Sync(a);
             }
+            SyncDeskWindows();
             if (unchecked(Environment.TickCount - lastThemeCheck) > 60000) CheckTheme(false);
             if (claudePids.Count > 64) claudePids.Clear(); // forget pids of processes long gone
         };
@@ -1409,10 +1568,20 @@ public static class ClaudeBg
         // Restore the Claude windows on every way out the process can still see.
         Application.ApplicationExit += (s, e) =>
         {
+            StopDeskRuntime();
             DetachAll();
             timer.Stop();
+            timer.Dispose();
+            slideTimer.Stop(); slideTimer.Dispose();
+            fadeTimer.Stop(); fadeTimer.Dispose();
+            holdTimer.Stop(); holdTimer.Dispose();
             foreach (var hook in globalHooks) UnhookWinEvent(hook);
             tray.Visible = false;
+            var icon = tray.Icon;
+            tray.Dispose();
+            if (icon != null) icon.Dispose();
+            if (bgImage != null) { bgImage.Dispose(); bgImage = null; }
+            host.DestroyHandle();
         };
         Application.ThreadException += (s, e) => Log(e.Exception.ToString()); // keep running
         // These can run on another thread as the process ends, so they only make Claude opaque again.
@@ -1422,7 +1591,9 @@ public static class ClaudeBg
 
         scan();
         timer.Start();
+        if (firstRun || requestStudioOnStart) ui.Post(_ => { if (!deskClosing) ShowStudio(); }, null);
         Application.Run();
         GC.KeepAlive(mutex);
+        mutex.Dispose();
     }
 }
