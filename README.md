@@ -60,6 +60,8 @@ Windows 10/11 with .NET Framework 4.x, which is included with Windows. No other 
 2. Put the executable in a folder of its own and run it. On a fresh installation, Scene Studio opens automatically.
 3. Open Claude Desktop to see the scene behind it. Use the **Claude background** tray menu to reopen Studio, change preferences or exit. Tick **Start with Windows** if desired.
 
+If an older version is already running, choose **Exit (restore Claude window)** from its tray menu before starting the new executable. Keep your existing `settings.ini` to retain photo preferences and saved progress.
+
 For a photo, select **Image** and choose a file in Studio, or use **Change image** in the tray menu. An existing `bg.jpg` can still be selected in Image mode.
 
 The executable is not code-signed, so Windows may show a SmartScreen prompt. Release notes include a SHA256 hash for the release executable; you can also build from source.

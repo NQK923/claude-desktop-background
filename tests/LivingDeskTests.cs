@@ -302,6 +302,7 @@ static partial class Tests
             studioForm.Size = studioForm.MinimumSize;
             studioForm.PerformLayout();
             Application.DoEvents();
+            Check("minimum Studio keeps a usable scene preview", livePreview.Visible && livePreview.Width > 100 && livePreview.Height >= 72 && livePreview.Parent.ClientRectangle.Contains(livePreview.Bounds));
             using (var bitmap = new Bitmap(studioForm.Width, studioForm.Height))
             {
                 studioForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));

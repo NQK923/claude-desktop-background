@@ -258,7 +258,9 @@ public static partial class ClaudeBg
             AutoScaleMode = AutoScaleMode.Dpi;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(900, 650);
-            MinimumSize = new Size(720, 540);
+            // The timer keeps its natural height. Reserve enough vertical space above it for
+            // an actual scene, including the title, caption, window chrome and DPI scaling.
+            MinimumSize = new Size(720, 640);
             Font = OwnFont(9F, FontStyle.Regular);
             DoubleBuffered = true;
             var titleFont = OwnFont(21F, FontStyle.Bold);
@@ -300,7 +302,7 @@ public static partial class ClaudeBg
             previewTitle = DeskLabel("Rainy Study", sectionFont, "ink");
             previewTitle.Margin = new Padding(0, 0, 0, 9);
             previewCard.Controls.Add(previewTitle, 0, 0);
-            preview = new ScenePreview { Dock = DockStyle.Fill, Margin = new Padding(0), Name = "ScenePreview", AccessibleName = "Live scene preview" };
+            preview = new ScenePreview { Dock = DockStyle.Fill, Margin = new Padding(0), MinimumSize = new Size(160, 96), Name = "ScenePreview", AccessibleName = "Live scene preview" };
             previewCard.Controls.Add(preview, 0, 1);
             sceneHint = DeskLabel("", smallFont, "muted");
             sceneHint.Dock = DockStyle.Fill;
