@@ -563,7 +563,7 @@ internal static class ScenePainter
                 body.AddBezier(29, -54, 27, -8, 23, -4, 0, -4);
                 body.AddBezier(0, -4, -24, -4, -28, -9, -31, -54);
                 using (LinearGradientBrush glaze = new LinearGradientBrush(new RectangleF(-32, -55, 64, 52),
-                    Mix(ceramic, Color.FromArgb(238, 231, 196), .22f), Mix(ceramic, Color.FromArgb(57, 80, 74), .25f), 0))
+                    Mix(ceramic, Color.FromArgb(238, 231, 196), .22f), Mix(ceramic, Color.FromArgb(57, 80, 74), .25f), 0f))
                     g.FillPath(glaze, body);
             }
             FillEllipse(g, Mix(ceramic, Color.FromArgb(235, 232, 202), .30f), -31, -60, 60, 13);
@@ -619,7 +619,7 @@ internal static class ScenePainter
                 new PointF(x + 28, y), new PointF(x - 28, y) });
             using (LinearGradientBrush clay = new LinearGradientBrush(new RectangleF(x - 39, rootY, 78, 57),
                 Mix(Color.FromArgb(183, 127, 95), Color.FromArgb(153, 107, 79), night),
-                Mix(Color.FromArgb(141, 94, 73), Color.FromArgb(110, 82, 67), night), 0)) g.FillPath(clay, pot);
+                Mix(Color.FromArgb(141, 94, 73), Color.FromArgb(110, 82, 67), night), 0f)) g.FillPath(clay, pot);
         }
         FillRounded(g, new RectangleF(x - 41, rootY - 5, 82, 12), 3,
             Mix(Color.FromArgb(193, 139, 103), Color.FromArgb(164, 119, 86), night));

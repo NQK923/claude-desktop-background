@@ -34,6 +34,8 @@ static partial class Tests
     [STAThread]
     static int Main(string[] args)
     {
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+        Application.EnableVisualStyles();
         app = Assembly.LoadFrom(args[0]).GetType("ClaudeBg");
         dir = Path.Combine(Path.GetTempPath(), "ClaudeBgTests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
